@@ -1,6 +1,6 @@
 [package]
 name = "coucou-hook"
-description = "Relays Claude Code hook events to Coucou over a named pipe"
+description = "Relays privacy-safe CLI agent events to Coucou over a named pipe"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,6 +10,7 @@ name = "coucou-hook"
 path = "src/main.rs"
 
 [dependencies]
+coucou-agent-protocol = { path = "../agent-protocol" }
 serde_json = "1"
 
 # Just enough Win32 to know our own SID and to check who is serving the pipe.

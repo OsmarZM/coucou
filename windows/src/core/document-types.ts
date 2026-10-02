@@ -1,0 +1,5 @@
+export interface Coverage { extractedChars: number; totalPages: number | null; readPages: number | null; emptyPages: number[]; truncated: boolean; notes: string[] }
+export interface Attachment { id: string; conversationId: string; name: string; kind: "text" | "json" | "csv" | "pdf" | "docx" | "image"; size: number; sha256: string; createdAt: number; status: "queued" | "ready" | "error" | "unsupported"; message: string | null; coverage: Coverage | null }
+export interface DocumentReference { id: string; attachmentId: string; label: string; offsetChars: number; endChars: number; page: number | null; paragraph: number | null; lineStart: number | null; lineEnd: number | null }
+export interface DocumentChunk { attachmentId: string; name: string; text: string; offsetChars: number; nextOffsetChars: number; totalChars: number; hasMore: boolean; references: DocumentReference[]; coverage: Coverage }
+export interface PreparedDocuments { text: string; chunks: DocumentChunk[]; attachments: Attachment[]; usedChars: number; budgetChars: number; partial: boolean }

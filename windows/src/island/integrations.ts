@@ -5,6 +5,7 @@
 import { onEvent, Bridge, type IntegrationUpdate } from "../core/bridge";
 import { Sound } from "../core/sound";
 import { State } from "../core/state";
+import { AGENT_IDS, AGENT_META } from "../core/sessions";
 import type { Island } from "./island";
 
 /** Which Credential Manager key backs each pill. */
@@ -27,16 +28,27 @@ export function registerIntegrationHandlers(island: Island) {
 
 /** Asks Rust which keys exist so the idle cards can say so. */
 export async function refreshConfigured() {
-  for (const [id, key] of Object.entries(KEY_FOR)) {
-    const present = (await Bridge.secretPresent(key)) ?? false;
+  const keys = Object.entries(KEY_FOR);
+  const secrets = await Promise.allSettled(keys.map(([, key]) => Bridge.secretPresent(key)));
+  for (const [index, result] of secrets.entries()) {
+    const id = keys[index][0];
+    const present = result.status === "fulfilled" ? result.value : false;
     const info = State.integrations[id] ?? { data: {}, error: null, loaded: false, configured: false };
-    State.integrations[id] = { ...info, configured: present };
+    State.integrations[id] = { ...info, configured: present ?? false };
   }
-  const hooks = State.settings.hooksInstalled;
-  const claude = State.integrations.integration_claude ?? {
-    data: {}, error: null, loaded: false, configured: false,
-  };
-  State.integrations.integration_claude = { ...claude, configured: hooks };
+  const hooks = await Promise.allSettled(AGENT_IDS.map((agent) => Bridge.agentHooksStatus(agent)));
+  for (const [index, result] of hooks.entries()) {
+    const agent = AGENT_IDS[index];
+    const status = result.status === "fulfilled" ? result.value : null;
+    const id = AGENT_META[agent].taskId;
+    const info = State.integrations[id] ?? { data: {}, error: null, loaded: false, configured: false };
+    State.integrations[id] = {
+      ...info, configured: status?.installed ?? false,
+      error: result.status === "rejected" ? "Hook status unavailable"
+        : status?.installed && !status.hookReady ? "Hook relay unavailable" : null,
+      data: { ...info.data, hookReady: status?.hookReady ?? false },
+    };
+  }
   State.notify();
 }
 

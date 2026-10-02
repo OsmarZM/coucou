@@ -11,6 +11,12 @@ pub struct Settings {
     pub sound_volume: f64,
     pub auto_close_interval: f64,
     pub absence_interval: f64,
+    /// Compact stays visible by default; "autoHide" opts into hiding while idle.
+    #[serde(default = "default_visibility_mode")]
+    pub visibility_mode: String,
+    /// User preference, independent of temporary approval retention.
+    #[serde(default)]
+    pub user_pinned: bool,
     pub active_integrations: Vec<String>,
     /// "primary" = the main display, "cursor" = whichever display the mouse is on.
     pub screen: String,
@@ -26,6 +32,10 @@ fn default_model() -> String {
     crate::claude::DEFAULT_MODEL.to_string()
 }
 
+fn default_visibility_mode() -> String {
+    "always".into()
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -33,6 +43,8 @@ impl Default for Settings {
             sound_volume: 0.12,
             auto_close_interval: 15.0,
             absence_interval: 180.0,
+            visibility_mode: default_visibility_mode(),
+            user_pinned: false,
             active_integrations: vec![
                 "integration_resend".into(),
                 "integration_n8n".into(),
@@ -84,4 +96,32 @@ pub fn save(settings: &Settings) -> std::io::Result<()> {
     let json = serde_json::to_vec_pretty(settings)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
     std::fs::write(settings_path(), json)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Settings;
+
+    #[test]
+    fn older_settings_keep_preferences_and_default_to_visible_without_user_pin() {
+        let old = serde_json::json!({
+            "soundEnabled": false,
+            "soundVolume": 0.04,
+            "autoCloseInterval": 23.0,
+            "absenceInterval": 90.0,
+            "activeIntegrations": ["integration_notion"],
+            "screen": "cursor",
+            "autostart": true,
+            "hooksInstalled": true,
+            "model": "existing-model"
+        });
+        let settings: Settings = serde_json::from_value(old).unwrap();
+        assert_eq!(settings.visibility_mode, "always");
+        assert!(!settings.user_pinned);
+        assert!(!settings.sound_enabled);
+        assert_eq!(settings.auto_close_interval, 23.0);
+        assert_eq!(settings.active_integrations, vec!["integration_notion"]);
+        assert_eq!(settings.model, "existing-model");
+        assert!(settings.autostart);
+    }
 }

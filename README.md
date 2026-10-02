@@ -1,3 +1,5 @@
+**Windows / português:** [instalação passo a passo do Coucou pessoal 0.1.2](README-WINDOWS.md), incluindo CLIs, autenticação, build, instalador e uso dos personagens.
+
 <div align="center">
 
 <img src="NotchBuddy/Assets.xcassets/AppIcon.appiconset/icon_256x256.png" width="96" alt="Coucou icon">
@@ -39,7 +41,7 @@ Meet **Mochi**: a soft little squircle with big eyes that pops out of your notch
 - 🪟 **Drag Mochi onto any window** — attach that window as context for Claude *(macOS)*.
 - 🔌 **Integrations** — Stripe payments, n8n workflows, GitHub, Vercel deployments, Resend emails, Notion, Cal.com. Each one gets its own little colored Mochi.
 - 🎭 **A real character** — idle breathing, blinks, eyes on a sphere that follow your mouse, emotes, 28 handcrafted sounds, a greeting on launch.
-- 🫥 **Invisible when idle** — hides away when nothing is running, peeks out when you hover the notch (the top edge of the screen on Windows).
+- 🫥 **Visibility** — hides when idle on macOS and peeks out when you hover the notch. The Windows personal-agent version stays compact and visible by default, with explicit hiding/pinning and a top-centre hover target.
 - 🔒 **Private by design** — no telemetry, no account. Keys live in your macOS Keychain or Windows Credential Manager. The app only talks to the services you plug in.
 
 <table>
@@ -63,14 +65,22 @@ Meet **Mochi**: a soft little squircle with big eyes that pops out of your notch
 
 ### Windows
 
-The Windows installer is **temporarily unavailable**. Microsoft Defender wrongly
-flags the unsigned installer as malware; a false-positive report is under review
-at Microsoft and the installer will come back once it is cleared and signed.
-Until then you can [build it from source](#build-from-source).
+This checkout includes a local Windows personal-agent implementation, version
+0.1.2. Follow the [step-by-step Portuguese installation guide](README-WINDOWS.md)
+to prepare the computer, install and authenticate the CLIs, generate the installer
+and use the animated characters with a continuous personal context.
 
-There is no notch on a PC, so the island slides out of the top edge of the screen
-instead of hiding inside one. See [`windows/README.md`](windows/README.md) for the
-rest of the differences.
+Windows 0.1.2 enables chat through Codex CLI and Claude Code. Gemini CLI and
+GitHub Copilot CLI remain available for installation, sign-in and monitoring;
+their chat is unavailable in all modes until inherited hooks and MCP settings
+are isolated and qualified. Choosing a project directory does not enable it.
+
+The original upstream installer notice concerned an unsigned package and a
+Defender report; its current publication/signing status was not verified for this
+delivery. Local compilation, installation and upstream publication are separate
+steps. See [`windows/README.md`](windows/README.md) and the
+[current validation report](docs/VALIDACAO-AGENTE-PESSOAL-WINDOWS-2026-10-02.md) for
+the Windows behavior and evidence.
 
 ### Build from source
 
@@ -84,12 +94,15 @@ xcodegen
 open NotchBuddy.xcodeproj   # then ⌘R
 ```
 
-**Windows** — requirements: [Rust](https://rustup.rs), Node 20+, MSVC build tools.
+**Windows** — requirements: [Rust](https://rustup.rs), Node 22+, MSVC build tools,
+and WebView2. Use the [Portuguese installation guide](README-WINDOWS.md) for the
+complete prerequisites and CLI authentication.
+
+Build from a checkout containing the Windows 0.1.2 implementation:
 
 ```powershell
-git clone https://github.com/Louis-CFM/coucou.git
-cd coucou/windows
-npm install
+Set-Location -LiteralPath 'D:\coucou\windows'
+npm ci
 npm run pack                # installer lands in windows/release/
 ```
 

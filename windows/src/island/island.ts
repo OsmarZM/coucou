@@ -3,6 +3,8 @@
 
 import { Tracked, Spring, clamp } from "../core/anim";
 import { Bridge, IS_TAURI, onDragDrop } from "../core/bridge";
+import { ensureAttachmentConversation, ingestConversationAttachments } from "../core/attachments";
+import { chatDiagnostic } from "../core/agent-chat";
 import {
   EXPANDED_CORNER, EXPANDED_W, NOTCH_W, PANEL_H, PANEL_W,
   ROUNDED_CORNER, VIEW_LAYOUTS, botGlowColor, botGlowOpacity, botPosition, chatPromptHeight,
@@ -11,6 +13,8 @@ import {
 } from "../core/layout";
 import { Sound } from "../core/sound";
 import { State } from "../core/state";
+import { agentForTask } from "../core/sessions";
+import { AgentChat, cancelAgentChatApprovals } from "../core/agent-chat";
 import { BotEngine, hexToRGB } from "../mochi/engine";
 import { Greeting } from "../mochi/greeting";
 import { createMiniBot, pruneMiniBots, syncMiniBotStates, tickMiniBots } from "../mochi/minibots";
@@ -19,6 +23,7 @@ import { USC, UploadSeq } from "../upload/sequence";
 import { buildHeader, buildViews, type ViewActions, type ViewHost } from "../views/views";
 import { h } from "../views/dom";
 import { IslandStateMachine } from "./fsm";
+import { cancelPendingApproval } from "./hooks";
 
 const BOT_OVERHANG = 40;
 /** Same margin as the Rust hit test (src-tauri/src/island.rs). */
@@ -64,6 +69,7 @@ export class Island {
   private running = false;
   private lastFrame = 0;
   private dirty = true;
+  private approvalDecisionInFlight = false;
   private canvasPx = 0;
 
   // Rust starts the window at full size so the launch greeting has room.
@@ -72,7 +78,10 @@ export class Island {
   private wasInIsland = false;
   /** Last shape handed to Rust for the click-through test. */
   private pushedRect = { x: -1, y: -1, w: -1, h: -1 };
-  private homeCollapseAt: number | null = null;
+  private lastPanel: IslandViewName = "overview";
+  private pendingFileCopies = 0;
+  private focusGeneration = 0;
+  private windowFocused = typeof document !== "undefined" && document.hasFocus();
 
   // Bot hover → love (IslandWindowController.botHoverIn)
   private botHovering = false;
@@ -96,6 +105,7 @@ export class Island {
     this.engine.onDizzy = () => this.handleDizzy();
     this.greeting.onComplete = () => this.fsm.greetComplete();
     State.subscribe(() => {
+      this.syncInteractionRetention();
       this.dirty = true;
       this.ensureRunning();
     });
@@ -107,7 +117,14 @@ export class Island {
     const actions: ViewActions = {
       setView: (v) => this.setView(v),
       collapse: () => this.collapse(),
+      togglePin: () => {
+        State.settings.userPinned = !State.settings.userPinned;
+        this.fsm.userPinned = State.settings.userPinned;
+        void Bridge.saveSettings(State.settings);
+        State.notify();
+      },
       setFocus: (id) => {
+        if (State.pendingApproval && State.pendingApproval.taskId !== id) cancelPendingApproval(this);
         State.setFocus(id);
         Sound.play("blip");
       },
@@ -127,25 +144,37 @@ export class Island {
           integration_notion: "https://notion.so",
           integration_calcom: "https://app.cal.com/bookings",
         };
-        if (task.id === "integration_claude") void Bridge.openInVSCode(task.sessionCwd ?? null);
+        if (agentForTask(task.id)) void Bridge.openInVSCode(task.sessionCwd ?? null);
         else if (task.id === "integration_n8n") void Bridge.openN8n();
         else if (urls[task.id]) void Bridge.openUrl(urls[task.id]);
       },
       openUrl: (url) => {
         if (url) void Bridge.openUrl(url);
       },
-      decide: (d) => {
+      decide: async (d) => {
         const req = State.pendingApproval;
-        void Bridge.log(`decide ${d} req=${req?.requestId ?? "none"}`);
-        if (!req) return;
-        Sound.play(d === "deny" ? "blip" : "approve");
-        void Bridge.approvalDecision(req.requestId, d);
-        State.pendingApproval = null;
-        State.isPinned = false;
-        this.fsm.pinned = false;
-        State.updateTask("integration_claude", "working");
-        State.setPillBadge("integration_claude", null);
-        this.setView(State.defaultView());
+        if (!req || this.approvalDecisionInFlight || State.view !== "approval" || State.mode !== "expanded" ||
+            State.focusTask?.sessionKey !== req.sessionKey) return;
+        this.approvalDecisionInFlight = true;
+        try {
+          // Focus follows an explicit button click; receiving hooks never takes it.
+          await Bridge.focusWindow(true);
+          if (State.pendingApproval?.requestId !== req.requestId) return;
+          const accepted = await Bridge.approvalDecision(req.requestId, d);
+          if (State.pendingApproval?.requestId !== req.requestId) return;
+          if (accepted) {
+            State.sessions.decisionSent(req.sessionKey, req.generation);
+            Sound.play(d === "deny" ? "blip" : "approve");
+          }
+          cancelPendingApproval(this, !accepted);
+          State.syncAgentTasks();
+          State.notify();
+        } catch {
+          cancelPendingApproval(this);
+        } finally {
+          this.approvalDecisionInFlight = false;
+          void Bridge.focusWindow(false);
+        }
       },
       toggleSound: () => {
         State.settings.soundEnabled = !State.settings.soundEnabled;
@@ -225,6 +254,8 @@ export class Island {
 
   private wireFsm() {
     this.fsm.homeToPetitDelay = State.settings.autoCloseInterval;
+    this.fsm.visibilityMode = State.settings.visibilityMode;
+    this.fsm.userPinned = State.settings.userPinned;
     this.fsm.onTransition = (from, to) => {
       switch (to) {
         case "hidden":
@@ -235,11 +266,9 @@ export class Island {
           else if (from === "hidden") Sound.play("peek");
           this.setMode("compact");
           if (from === "coucou") State.view = State.defaultView();
-          if (!this.wasInIsland) this.fsm.mouseLeft();
           break;
         case "home":
-          this.expand(State.defaultView());
-          if (!this.wasInIsland) this.fsm.mouseLeft();
+          this.expand(State.pendingApproval ? "approval" : AgentChat.provider !== "anthropic" && AgentChat.current?.approval ? "prompt" : this.restorablePanel());
           break;
         case "coucou":
           this.expand("greeting");
@@ -259,6 +288,11 @@ export class Island {
   private setMode(mode: IslandMode) {
     const prev = State.mode;
     if (mode === prev) return;
+    if (mode !== "expanded") {
+      this.focusGeneration++;
+      cancelPendingApproval(this);
+      cancelAgentChatApprovals();
+    }
     State.mode = mode;
     if (mode === "expanded") Sound.play("open");
     if (prev === "expanded") {
@@ -289,22 +323,30 @@ export class Island {
   }
 
   expand(view: IslandViewName) {
+    this.focusGeneration++;
+    if (view !== "prompt") cancelAgentChatApprovals();
+    if (view !== "approval" && State.pendingApproval) cancelPendingApproval(this);
     this.stopSequenceIfLeaving(view);
     State.view = view;
+    if (view !== "greeting" && view !== "confused") this.lastPanel = view;
     if (State.mode !== "expanded") this.setMode("expanded");
     else this.animateGeometry(false);
     State.lastActivity = performance.now();
-    this.homeCollapseAt = null;
     State.notify();
   }
 
   setView(view: IslandViewName) {
+    this.focusGeneration++;
+    if (view !== "prompt") cancelAgentChatApprovals();
+    if (view !== "approval" && State.pendingApproval) cancelPendingApproval(this);
     this.stopSequenceIfLeaving(view);
+    if (view !== "greeting" && view !== "confused") this.lastPanel = view;
     if (State.mode !== "expanded") {
       this.fsm.forceHome();
       State.view = view;
       this.animateGeometry(false);
       State.notify();
+      if (view === "prompt") this.focusChatAfterClick();
       return;
     }
     const grew = VIEW_LAYOUTS[view].height >= VIEW_LAYOUTS[State.view].height;
@@ -312,9 +354,45 @@ export class Island {
     State.lastActivity = performance.now();
     this.animateGeometry(!grew);
     State.notify();
+    if (view === "prompt") this.focusChatAfterClick();
+  }
+
+  private restorablePanel(): IslandViewName {
+    if (this.lastPanel === "approval" && !State.pendingApproval) return State.defaultView();
+    return this.lastPanel;
+  }
+
+  /** Hover and incoming activity never request keyboard focus. */
+  private focusChatAfterClick() {
+    const generation = ++this.focusGeneration;
+    void Bridge.focusWindow(true).then(() => {
+      if (generation !== this.focusGeneration) return;
+      window.setTimeout(() => {
+        if (generation === this.focusGeneration && State.mode === "expanded" && State.view === "prompt") this.views.get("prompt")?.focus?.();
+      }, 120);
+    });
+  }
+
+  private syncInteractionRetention() {
+    this.fsm.userPinned = State.settings.userPinned;
+    this.fsm.pinned = State.isPinned || State.pendingApproval != null || AgentChat.current?.approval != null;
+    const active = document.activeElement;
+    const editing = active instanceof HTMLElement && this.islandEl.contains(active) &&
+      active.matches("input, textarea, select, [contenteditable='true']");
+    this.fsm.setRetention("focus", this.windowFocused && editing);
+    const drafts = this.islandEl.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(".chat-input, [data-chat-draft]");
+    this.fsm.setRetention("draft", [...drafts].some((field) => (field.value ?? field.textContent ?? "").trim().length > 0));
+    const selection = document.getSelection();
+    this.fsm.setRetention("selection", Boolean(selection && !selection.isCollapsed &&
+      selection.anchorNode && this.islandEl.contains(selection.anchorNode)));
+    this.fsm.setRetention("drag", State.fileDragOver);
+    this.fsm.setRetention("busy", State.attachmentBusy || this.pendingFileCopies > 0 || this.uploadActive ||
+      (State.view === "prompt" && (Boolean(AgentChat.current?.runId) || State.stateOverride === "thinking")));
   }
 
   collapse() {
+    cancelAgentChatApprovals();
+    cancelPendingApproval(this);
     State.isPinned = false;
     this.fsm.pinned = false;
     // Drive the state machine rather than the mode: setting the mode behind its
@@ -325,7 +403,8 @@ export class Island {
 
   /** Alert from the hook server: open on this view. Pinned alerts never auto-close. */
   alert(view: IslandViewName) {
-    this.fsm.pinned = State.isPinned;
+    if (view !== "approval" && State.pendingApproval) cancelPendingApproval(this);
+    this.syncInteractionRetention();
     this.fsm.forceHome();
     this.expand(view);
   }
@@ -336,7 +415,7 @@ export class Island {
 
   /** An alert stopped waiting for an answer: let the island auto-close again. */
   dropPin() {
-    this.fsm.pinned = false;
+    this.syncInteractionRetention();
   }
 
   // ── File drop ───────────────────────────────────────────────────────────────
@@ -367,13 +446,13 @@ export class Island {
       }
       case "drop": {
         State.fileDragOver = false;
-        const path = e.paths?.[0];
-        if (!path) {
+        const paths = e.paths ?? [];
+        if (!paths.length) {
           this.engine.animateMorph(0);
           this.setView(State.defaultView());
           return;
         }
-        this.swallow(path);
+        this.swallow(paths);
         break;
       }
     }
@@ -384,12 +463,11 @@ export class Island {
    * the inbox runs in the background and swaps the path in when it lands, so a
    * slow disk can never stall the animation — same as FileDropHandler on macOS.
    */
-  private swallow(path: string) {
+  private swallow(paths: string[]) {
+    const path = paths[0];
     const name = path.split(/[\\/]/).pop() || "file";
     State.droppedFile = { name, path };
     State.promptContext = { kind: "file", name, path };
-    State.chatHistory = [];
-    void Bridge.chatReset();
 
     UploadSeq.performDrop(State.uploadDuration);
     this.uploadTens = 0;
@@ -404,19 +482,32 @@ export class Island {
     this.setView("uploading");
     this.ensureRunning();
 
-    void Bridge.ingestFile(path)
+    this.pendingFileCopies++;
+    this.syncInteractionRetention();
+    const importing = AgentChat.provider === "anthropic" ? Bridge.ingestFile(path).then((file) => {
+      State.droppedFile = { name: file.name, path: file.path };
+      State.promptContext = { kind: "file", name: file.name, path: file.path };
+    }) : Promise.resolve().then(() => {
+      const conversation = ensureAttachmentConversation();
+      // This ID is captured once; a later navigation never redirects the files.
+      return ingestConversationAttachments(conversation.id, paths);
+    });
+    void importing
       .then((file) => {
-        State.droppedFile = { name: file.name, path: file.path };
-        State.promptContext = { kind: "file", name: file.name, path: file.path };
+        void file;
         State.notify();
       })
       .catch((err) => {
         UploadSeq.deactivate();
-        State.noteMessage = String(err).replace(/^Error:\s*/, "");
+        State.noteMessage = chatDiagnostic(err);
         this.engine.animateMorph(0);
         this.setView("note");
         Sound.play("error");
         window.setTimeout(() => this.setView(State.defaultView()), 2400);
+      })
+      .finally(() => {
+        this.pendingFileCopies = Math.max(0, this.pendingFileCopies - 1);
+        State.notify();
       });
   }
 
@@ -527,17 +618,30 @@ export class Island {
   private wireInput() {
     // The wake strip is the only thing the OS can hit while the island is hidden.
     this.wakeStrip.addEventListener("mouseenter", () => {
+      if (State.paused) return;
       Sound.resume();
       if (State.mode === "hidden") this.fsm.mouseEntered();
     });
+    this.wakeStrip.addEventListener("mouseleave", () => {
+      if (State.mode === "hidden") this.fsm.mouseLeft();
+    });
+    this.islandEl.addEventListener("input", () => this.syncInteractionRetention());
+    this.islandEl.addEventListener("focusin", () => this.syncInteractionRetention());
+    this.islandEl.addEventListener("focusout", () => queueMicrotask(() => this.syncInteractionRetention()));
+    document.addEventListener("selectionchange", () => this.syncInteractionRetention());
+    window.addEventListener("focus", () => { this.windowFocused = true; this.syncInteractionRetention(); });
+    window.addEventListener("blur", () => { this.windowFocused = false; this.syncInteractionRetention(); });
 
     this.islandEl.addEventListener("mousedown", (e) => {
+      if (State.paused) return;
       Sound.resume();
       State.lastActivity = performance.now();
       if (State.mode !== "expanded") {
         this.fsm.click();
+        if (State.view === "prompt") this.focusChatAfterClick();
         return;
       }
+      if (State.view === "prompt") void Bridge.focusWindow(true);
       if (this.isBotHit(e.clientX, e.clientY)) {
         this.cancelBotHover();
         this.engine.slap();
@@ -575,15 +679,12 @@ export class Island {
       y >= rect.y - HIT_MARGIN && y <= rect.y + rect.h + HIT_MARGIN;
 
     if (inIsland && !this.wasInIsland) {
+      this.wasInIsland = true;
       if (this.fsm.state === "coucou") this.greeting.hover();
-      this.fsm.mouseEntered();
-      this.homeCollapseAt = null;
+      if (!State.paused) this.fsm.mouseEntered();
     }
     if (!inIsland && this.wasInIsland) {
       this.fsm.mouseLeft();
-      if (this.fsm.state === "home" && !State.isPinned) {
-        this.homeCollapseAt = performance.now() + State.settings.autoCloseInterval * 1000;
-      }
     }
     this.wasInIsland = inIsland;
 
@@ -652,7 +753,8 @@ export class Island {
       this.engine.setState(State.effectiveState);
       if (State.view === "confused") {
         const fallback = State.defaultView();
-        this.setView(this.prevViewBeforeConfused === "confused" ? fallback : this.prevViewBeforeConfused);
+        const previous = this.prevViewBeforeConfused;
+        this.setView(previous === "confused" || (previous === "approval" && !State.pendingApproval) ? fallback : previous);
       }
       this.engine.triggerEmote("happy");
     }, 3300);
@@ -808,13 +910,14 @@ export class Island {
   }
 
   private updateCountdown(nowMs: number) {
-    if (State.mode !== "expanded" || State.isPinned || this.homeCollapseAt == null) {
+    const deadline = this.fsm.collapseDeadline;
+    if (State.mode !== "expanded" || this.fsm.protected || deadline == null) {
       this.countdown.style.width = "0px";
       return;
     }
     const autoClose = State.settings.autoCloseInterval;
     const windowS = Math.min(10, autoClose * 0.6);
-    const remaining = (this.homeCollapseAt - nowMs) / 1000;
+    const remaining = (deadline - nowMs) / 1000;
     this.countdown.style.width =
       remaining < windowS ? `${Math.max(0, clamp(remaining / windowS, 0, 1) * 160)}px` : "0px";
   }
@@ -833,6 +936,10 @@ export class Island {
     for (const [name, view] of this.views) {
       const on = name === State.view;
       view.el.classList.toggle("on", on);
+      // Opacity alone keeps hidden controls in keyboard and accessibility trees.
+      // Preserve the fade while preventing interaction with another view's card.
+      view.el.inert = !on || !expanded || greetingActive;
+      view.el.setAttribute("aria-hidden", String(view.el.inert));
       if (on) view.sync();
     }
 
@@ -841,10 +948,7 @@ export class Island {
     if (this.lastSyncedView !== State.view) {
       const wasChat = this.lastSyncedView === "prompt";
       this.lastSyncedView = State.view;
-      if (State.view === "prompt") {
-        void Bridge.focusWindow(true);
-        window.setTimeout(() => this.views.get("prompt")?.focus?.(), 120);
-      } else if (wasChat) {
+      if (wasChat && State.view !== "prompt") {
         void Bridge.focusWindow(false);
       }
     }
@@ -874,6 +978,8 @@ export class Island {
     Sound.setEnabled(State.settings.soundEnabled);
     Sound.setVolume(State.settings.soundVolume);
     this.fsm.homeToPetitDelay = State.settings.autoCloseInterval;
+    this.fsm.visibilityMode = State.settings.visibilityMode;
+    this.syncInteractionRetention();
     State.notify();
   }
 

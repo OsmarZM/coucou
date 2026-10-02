@@ -5,8 +5,9 @@ import { Bridge, IS_TAURI, onEvent } from "./core/bridge";
 import { Sound } from "./core/sound";
 import { State, type Settings } from "./core/state";
 import { Island } from "./island/island";
-import { registerHookHandlers } from "./island/hooks";
+import { registerHookHandlers, cancelPendingApproval } from "./island/hooks";
 import { registerIntegrationHandlers, refreshConfigured } from "./island/integrations";
+import { registerAgentChatHandlers, cancelAgentChatTurns, disposeAgentChatHandlers } from "./core/agent-chat";
 
 async function main() {
   const root = document.getElementById("root");
@@ -28,8 +29,13 @@ async function main() {
   /** Pause has to reach Rust too, or the pollers keep calling out. */
   const setPaused = (on: boolean) => {
     if (State.paused === on) return;
+    if (on) {
+      cancelPendingApproval(island);
+      cancelAgentChatTurns();
+    }
     State.paused = on;
     void Bridge.setPaused(on);
+    State.notify();
   };
 
   await onEvent<string>("tray", (what) => {
@@ -62,6 +68,11 @@ async function main() {
 
   registerHookHandlers(island);
   registerIntegrationHandlers(island);
+  await registerAgentChatHandlers(island);
+  window.addEventListener("beforeunload", () => {
+    cancelAgentChatTurns();
+    disposeAgentChatHandlers();
+  });
 
   island.launch();
 

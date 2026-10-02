@@ -6,6 +6,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { Settings } from "./state";
+import type { Attachment, DocumentChunk, PreparedDocuments } from "./document-types";
+import type { MemoryPreferences, MemoryQuery, MemoryCandidate, MemoryRecord, SkillCandidate, SkillRecord, SkillDiff, SkillExport, SessionRecord, StoredMessage, SessionSearchHit } from "./personal-types";
 
 export const IS_TAURI =
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -71,8 +73,16 @@ export const Bridge = {
   hooksApply: (install: boolean, fingerprint: string) =>
     callOrThrow<string>("hooks_apply", { install, fingerprint }),
 
+  agentHooksStatus: (agent: string) => IS_TAURI
+    ? callOrThrow<HookStatus>("agent_hooks_status", { agent })
+    : Promise.resolve(null),
+  agentHooksPreview: (agent: string, install: boolean) =>
+    callOrThrow<HookPreview>("agent_hooks_preview", { agent, install }),
+  agentHooksApply: (agent: string, install: boolean, fingerprint: string) =>
+    callOrThrow<string>("agent_hooks_apply", { agent, install, fingerprint }),
+
   approvalDecision: (requestId: string, decision: "allow" | "deny") =>
-    call<void>("approval_decision", { requestId, decision }),
+    callOrThrow<boolean>("approval_decision", { requestId, decision }),
   /** "The card is up" — until this lands the relay only waits a moment. */
   approvalAck: (requestId: string) => call<void>("approval_ack", { requestId }),
   /** "Nobody can act on this" — Claude Code asks in the terminal right away. */
@@ -83,6 +93,42 @@ export const Bridge = {
   chatSend: (query: string, context: ChatContext | null) =>
     callOrThrow<{ text: string }>("chat_send", { query, context }),
   chatReset: () => call<void>("chat_reset"),
+  agentChatStatus: () => callOrThrow<AgentChatStatus[]>("agent_chat_status"),
+  agentChatStart: (request: AgentChatStart) => callOrThrow<void>("agent_chat_start", { request }),
+  agentChatCancel: (conversationId: string, runId: string) =>
+    callOrThrow<boolean>("agent_chat_cancel", { conversationId, runId }),
+  agentChatDecide: (conversationId: string, runId: string, requestId: string, decision: "allow" | "allowConversation" | "deny") =>
+    callOrThrow<boolean>("agent_chat_decide", { conversationId, runId, requestId, decision }),
+  memoryPreferences: () => callOrThrow<MemoryPreferences>("memory_preferences"),
+  memorySetPreferences: (preferences: MemoryPreferences) => callOrThrow<MemoryPreferences>("memory_set_preferences", { preferences }),
+  memoryList: (query: MemoryQuery) => callOrThrow<MemoryRecord[]>("memory_list", { query }),
+  memoryPropose: (candidate: MemoryCandidate) => callOrThrow<MemoryRecord>("memory_propose", { candidate }),
+  memoryApprove: (id: string, revision: number) => callOrThrow<MemoryRecord>("memory_approve", { id, revision }),
+  memoryReject: (id: string, revision: number) => callOrThrow<MemoryRecord>("memory_reject", { id, revision }),
+  memoryForget: (id: string, revision: number) => callOrThrow<number>("memory_forget", { id, revision }),
+  memoryExport: (includeHistory: boolean) => callOrThrow<string>("memory_export", { includeHistory }),
+  skillsList: (query: MemoryQuery) => callOrThrow<SkillRecord[]>("skills_list", { query }),
+  skillsPropose: (candidate: SkillCandidate) => callOrThrow<SkillRecord>("skills_propose", { candidate }),
+  skillsApprove: (id: string, revision: number) => callOrThrow<SkillRecord>("skills_approve", { id, revision }),
+  skillsReject: (id: string, revision: number) => callOrThrow<SkillRecord>("skills_reject", { id, revision }),
+  skillsForget: (id: string, revision: number) => callOrThrow<number>("skills_forget", { id, revision }),
+  skillsDiff: (id: string, revision: number) => callOrThrow<SkillDiff>("skills_diff", { id, revision }),
+  skillsLoad: (id: string, revision: number) => callOrThrow<SkillRecord>("skills_load", { id, revision }),
+  skillsExport: (id: string, revision: number) => callOrThrow<SkillExport>("skills_export", { id, revision }),
+  skillsImport: (markdown: string, scope: string) => callOrThrow<SkillRecord>("skills_import", { markdown, scope }),
+  skillsRestore: (id: string) => callOrThrow<SkillRecord>("skills_restore", { id }),
+  historyList: (limit = 100) => callOrThrow<SessionRecord[]>("history_list", { limit }),
+  historySearch: (query: string, limit = 50) => callOrThrow<SessionSearchHit[]>("history_search", { query, limit }),
+  historyMessages: (conversationId: string, limit = 100) => callOrThrow<StoredMessage[]>("history_messages", { conversationId, limit }),
+  historyContext: (contextId: string, limit = 100, budget = 65536) => callOrThrow<import("./personal-types").PersonalContextHistory>("history_context", { contextId, limit, budget }),
+  historyForget: (conversationId: string) => callOrThrow<number>("history_forget", { conversationId }),
+  permissionsRevoke: (conversationId: string) => callOrThrow<void>("permissions_revoke", { conversationId }),
+  documentsChoose: () => callOrThrow<string[]>("documents_choose"),
+  documentsIngest: (conversationId: string, paths: string[]) => callOrThrow<Attachment[]>("documents_ingest", { conversationId, paths }),
+  documentsList: (conversationId: string) => callOrThrow<Attachment[]>("documents_list", { conversationId }),
+  documentsRemove: (conversationId: string, id: string) => callOrThrow<void>("documents_remove", { conversationId, id }),
+  documentsPrepare: (conversationId: string, attachmentIds: string[], budgetChars: number) => callOrThrow<PreparedDocuments>("documents_prepare", { conversationId, attachmentIds, budgetChars }),
+  documentsRead: (conversationId: string, id: string, offsetChars: number, limitChars: number) => callOrThrow<DocumentChunk>("documents_read", { conversationId, id, offsetChars, limitChars }),
   /** Copies a dropped file into the inbox. */
   ingestFile: (path: string) => callOrThrow<DroppedFile>("ingest_file", { path }),
   /** Only ever tells you whether a key exists — never its value. */
@@ -106,6 +152,33 @@ export interface IntegrationUpdate {
   event: { success: boolean; label: string; detail: string | null } | null;
 }
 
+export type ChatAgent = "codex" | "claude" | "gemini" | "copilot";
+export interface AgentChatStatus {
+  agent: ChatAgent;
+  available: boolean;
+  path: string | null;
+  detail: string;
+  readonlyOnly?: boolean;
+  personalSupported?: boolean;
+}
+export interface AgentChatStart {
+  conversationId: string;
+  runId: string;
+  agent: ChatAgent;
+  cwd: string;
+  sessionId: string | null;
+  query: string;
+  writable: boolean;
+  attachmentIds: string[];
+  contextId?: string | null;
+}
+export interface AgentChatEvent {
+  conversationId: string;
+  runId: string;
+  kind: string;
+  data: Record<string, unknown>;
+}
+
 export type ChatContext =
   | { kind: "file"; name: string; path: string }
   | { kind: "window"; appName: string; title: string; url?: string };
@@ -117,6 +190,8 @@ export interface DroppedFile {
 }
 
 export interface HookStatus {
+  agent?: string;
+  cliAvailable?: boolean;
   installed: boolean;
   settingsPath: string;
   hookPath: string;

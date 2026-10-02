@@ -1,3 +1,4 @@
+import { tr, formatText } from "../core/i18n";
 // Settings window — the place where anything that writes to disk is confirmed.
 // Stage 2 covers the Claude Code hooks and the general preferences; API keys and
 // integrations land here too in a later stage.
@@ -9,6 +10,7 @@ import { h, clear } from "../views/dom";
 
 let settings: Settings = { ...DEFAULT_SETTINGS };
 let version = "";
+let syncGeneral = () => {};
 
 const root = document.getElementById("settings-root")!;
 
@@ -23,6 +25,7 @@ function toggle(on: boolean, onChange: (v: boolean) => void): HTMLElement {
   el.addEventListener("click", () => {
     const next = !el.classList.contains("on");
     el.classList.toggle("on", next);
+    el.setAttribute("aria-pressed", String(next));
     onChange(next);
   });
   return el;
@@ -36,135 +39,129 @@ function renderDiff(text: string): HTMLElement {
   const box = h("div", { class: "diff" });
   for (const line of text.split("\n")) {
     const cls = line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : "ctx";
-    box.append(h("div", { class: cls, text: line }));
+    box.append(h("div", { class: cls, text: line === "No change." ? tr("No change.") : line }));
   }
   return box;
 }
 
-// ── Claude Code section ───────────────────────────────────────────────────────
+// ── Local CLI agents ──────────────────────────────────────────────────────────
 
-function claudeSection(status: HookStatus): HTMLElement {
+type CliAgent = "claude" | "codex" | "gemini" | "copilot";
+interface CliAgentDefinition {
+  agent: CliAgent;
+  name: string;
+  description: string;
+  activation: string;
+}
+const CLI_AGENTS: CliAgentDefinition[] = [
+  {
+    agent: "claude", name: "Claude Code",
+    description: tr("Follow local CLI sessions, tool activity and completion. Claude permission requests can be answered in the island."),
+    activation: tr("Open a new Claude Code session to load these hooks."),
+  },
+  {
+    agent: "codex", name: "Codex CLI",
+    description: tr("Follow local CLI sessions, tool activity and completion. Permission decisions remain in Codex."),
+    activation: tr("Open a new Codex CLI session, then use /hooks to review and trust Coucou's exact hook definitions. Coucou does not grant that trust."),
+  },
+  {
+    agent: "gemini", name: "Gemini CLI",
+    description: tr("Follow local CLI sessions, tool activity, completion and permission notifications. Answer permission requests in Gemini."),
+    activation: tr("Restart Gemini CLI and check /hooks. If hooks are disabled by your settings or policy, enable them there after review."),
+  },
+  {
+    agent: "copilot", name: "GitHub Copilot CLI",
+    description: tr("Follow local CLI sessions, tool activity and completion. Permission decisions remain in Copilot. This integration uses a dedicated user hook file."),
+    activation: tr("Restart Copilot CLI to load the user hooks. Repository hooks also run; avoid copying Coucou's handlers into a project hook file."),
+  },
+];
+
+function agentSection(def: CliAgentDefinition, initial: HookStatus | null, initialError: string | null): HTMLElement {
+  let status = initial;
+  let error = initialError;
   const body = h("div", { style: "display:flex;flex-direction:column;gap:12px" });
-  const section = h(
-    "section",
-    {},
-    h("h2", {}, statusDot(status.installed), h("span", { text: "Claude Code" })),
-    body,
-  );
+  const heading = h("h2", {});
+  const section = h("section", {}, heading, body);
 
   const rebuild = async () => {
-    const fresh = await Bridge.hooksStatus();
-    if (fresh) Object.assign(status, fresh);
+    try {
+      status = await Bridge.agentHooksStatus(def.agent);
+      error = null;
+    } catch (err) {
+      error = String(err).replace(/^Error:\s*/, "");
+    }
     clear(body);
     draw();
-    const head = section.querySelector("h2")!;
-    clear(head);
-    head.append(statusDot(status.installed), h("span", { text: "Claude Code" }));
   };
 
   function draw() {
+    clear(heading);
+    heading.append(statusDot(status?.installed ?? false), h("span", { text: def.name }));
+    body.append(h("div", { class: "hint", text: def.description }));
+    if (error) {
+      body.append(h("div", { class: "notice err", text: error }), h("div", { class: "row" }, h("button", { text: tr("Retry"), onclick: () => void rebuild() })));
+      return;
+    }
+    if (!status) {
+      body.append(h("div", { class: "notice warn", text: tr("Open settings inside Coucou to inspect and configure local CLI hooks.") }));
+      return;
+    }
     body.append(
-      h("div", {
-        class: "hint",
-        text: status.installed
-          ? "Coucou is hooked into your Claude Code sessions. Tool calls, questions and permission requests show up in the island, and you can answer them there."
-          : "Install the hooks to see your Claude Code sessions in the island and approve permissions without leaving what you are doing.",
-      }),
-      h("div", { class: "row" },
-        h("label", { text: "settings.json" }),
-        h("span", { class: "path", text: status.settingsPath }),
-      ),
-      h("div", { class: "row" },
-        h("label", { text: "Relay" }),
-        h("span", { class: "path", text: status.hookPath }),
-        statusDot(status.hookReady),
-      ),
+      h("div", { class: "row" }, h("label", { text: "Hooks" }), h("span", { text: status.installed ? tr("Hooks present — open a CLI session to verify") : tr("Not configured") })),
+      h("div", { class: "row" }, h("label", { text: tr("Configuration") }), h("span", { class: "path", text: status.settingsPath })),
+      h("div", { class: "row" }, h("label", { text: tr("Relay") }), h("span", { class: "path", text: status.hookPath }), statusDot(status.hookReady)),
     );
-
+    if (status.cliAvailable !== undefined) {
+      body.append(h("div", { class: "row" }, h("label", { text: tr("CLI on PATH") }), h("span", { class: "hint", text: status.cliAvailable ? tr("Found — session compatibility still needs a real event") : tr("Not found — install the CLI or check the PATH used to launch Coucou") })));
+    }
+    body.append(h("div", { class: "hint", text: def.activation }));
     if (!status.hookReady) {
-      body.append(h("div", {
-        class: "notice warn",
-        text: "coucou-hook.exe is not in place yet. Restart Coucou; if it still fails, build it with `cargo build -p coucou-hook`.",
-      }));
+      body.append(h("div", { class: "notice warn", text: tr("coucou-hook.exe is unavailable. Restart Coucou before installing hooks.") }));
     }
-
-    const actions = h("div", { class: "row" });
-    const install = h("button", {
-      class: "primary",
-      text: status.installed ? "Reinstall hooks…" : "Install hooks…",
-      onclick: () => showPreview(true),
-    });
-    // Writing hook commands that point at a relay which isn't there would give
-    // every Claude Code session a broken hook and nothing to show for it.
-    if (!status.hookReady) {
-      install.disabled = true;
-      install.title = "The relay isn't installed yet.";
-    }
-    actions.append(install);
-    if (status.installed) {
-      actions.append(h("button", {
-        class: "danger",
-        text: "Uninstall hooks…",
-        onclick: () => showPreview(false),
-      }));
-    }
+    const install = h("button", { class: "primary", text: status.installed ? tr("Reinstall hooks…") : tr("Install hooks…"), onclick: () => void showPreview(true) });
+    install.disabled = !status.hookReady;
+    const actions = h("div", { class: "row" }, install, h("button", { text: tr("Refresh status"), onclick: () => void rebuild() }));
+    if (status.installed) actions.append(h("button", { class: "danger", text: tr("Uninstall hooks…"), onclick: () => void showPreview(false) }));
     body.append(actions);
   }
 
   async function showPreview(install: boolean) {
     let preview;
     try {
-      preview = await Bridge.hooksPreview(install);
+      preview = await Bridge.agentHooksPreview(def.agent, install);
     } catch (err) {
-      // An unreadable or invalid settings.json stops here rather than being
-      // treated as empty and written over.
       clear(body);
-      body.append(
-        h("div", { class: "notice err", text: String(err).replace(/^Error:\s*/, "") }),
-        h("div", { class: "row" }, h("button", {
-          text: "Back",
-          onclick: () => { clear(body); draw(); },
-        })),
-      );
+      body.append(h("div", { class: "notice err", text: String(err).replace(/^Error:\s*/, "") }), h("div", { class: "row" }, h("button", { text: tr("Back"), onclick: () => void rebuild() })));
       return;
     }
     if (!preview) return;
     clear(body);
     body.append(
-      h("div", {
-        class: "hint",
-        text: install
-          ? "This is exactly what will change in your settings.json. Your own hooks are left untouched."
-          : "This removes Coucou's entries only. Your own hooks are left untouched.",
-      }),
+      h("div", { class: "hint", text: install ? tr("Review the Coucou hooks below. Other settings and handlers are preserved. Nothing is written until you click the confirmation button.") : tr("Review removal of Coucou's handlers. Other settings and handlers are preserved.") }),
+      h("div", { class: "row" }, h("span", { class: "path", text: preview.settingsPath })),
       renderDiff(preview.diff),
-      h("div", { class: "row" },
-        h("span", { class: "path", text: `Backup → ${preview.backup}` }),
-      ),
     );
-    const confirm = h("button", {
-      class: install ? "primary" : "danger",
-      text: install ? "Back up and write" : "Back up and remove",
-    });
+    const noChange = preview.diff === "No change.";
+    if (preview.backup) body.append(h("div", { class: "row" }, h("span", { class: "path", text: formatText("template.backup", { path: preview.backup }) })));
+    else if (!noChange && install) body.append(h("div", { class: "hint", text: tr("This creates a new configuration file; there is no previous file to back up.") }));
+    if (noChange) {
+      body.append(h("div", { class: "row" }, h("button", { text: tr("Back"), onclick: () => void rebuild() })));
+      return;
+    }
+    const confirm = h("button", { class: install ? "primary" : "danger", text: install ? tr("Apply reviewed hooks") : tr("Remove reviewed hooks") });
     confirm.addEventListener("click", async () => {
       confirm.disabled = true;
       try {
-        const backup = await Bridge.hooksApply(install, preview.fingerprint);
+        const backup = await Bridge.agentHooksApply(def.agent, install, preview.fingerprint);
         clear(body);
-        body.append(h("div", {
-          class: "notice ok",
-          text: `Done. Previous settings saved as ${backup}. Open a new Claude Code session to pick the hooks up.`,
-        }));
-        window.setTimeout(() => void rebuild(), 2600);
+        body.append(h("div", { class: "notice ok", text: `${install ? tr("Hooks configured.") : tr("Coucou hooks removed.")}${backup ? formatText("template.previousBytes", { path: backup }) : ""} ${def.activation}` }), h("div", { class: "row" }, h("button", { text: tr("Back"), onclick: () => void rebuild() })));
       } catch (err) {
-        confirm.disabled = false;
-        body.append(h("div", { class: "notice err", text: `Could not write: ${String(err)}` }));
+        // A stale preview must be reviewed again instead of retrying its token.
+        clear(body);
+        body.append(h("div", { class: "notice err", text: formatText("template.applyError", { error: String(err).replace(/^Error:\s*/, "") }) }), h("div", { class: "row" }, h("button", { text: tr("Review again"), onclick: () => void showPreview(install) }), h("button", { text: tr("Back"), onclick: () => void rebuild() })));
       }
     });
-    body.append(h("div", { class: "row" }, confirm, h("button", {
-      text: "Cancel",
-      onclick: () => { clear(body); draw(); },
-    })));
+    body.append(h("div", { class: "row" }, confirm, h("button", { text: tr("Cancel"), onclick: () => void rebuild() })));
   }
 
   draw();
@@ -181,27 +178,27 @@ const MODELS: [string, string][] = [
 
 function apiSection(hasKey: boolean): HTMLElement {
   const dot = statusDot(hasKey);
-  const state = h("span", { class: "hint", text: hasKey ? "Key saved in the Windows Credential Manager." : "No key yet — the chat needs one." });
+  const state = h("span", { class: "hint", text: hasKey ? tr("Key saved in the Windows Credential Manager.") : tr("No API key yet — only the Anthropic API chat option needs one.") });
 
   const field = h("input", {
     type: "password",
-    placeholder: hasKey ? "••••••••••••  (stored)" : "sk-ant-...",
+    placeholder: hasKey ? tr("••••••••••••  (stored)") : "sk-ant-...",
     style: "flex:1 1 auto;min-width:0",
     autocomplete: "off",
     spellcheck: "false",
   }) as HTMLInputElement;
 
-  const saveBtn = h("button", { class: "primary", text: "Save key" });
-  const clearBtn = h("button", { class: "danger", text: "Remove" });
+  const saveBtn = h("button", { class: "primary", text: tr("Save key") });
+  const clearBtn = h("button", { class: "danger", text: tr("Remove") });
   const feedback = h("div", {});
 
   async function refresh() {
     const present = (await Bridge.secretPresent("anthropic-api-key")) ?? false;
     dot.style.background = present ? "#22c55e" : "#f4505e";
     state.textContent = present
-      ? "Key saved in the Windows Credential Manager."
-      : "No key yet — the chat needs one.";
-    field.placeholder = present ? "••••••••••••  (stored)" : "sk-ant-...";
+      ? tr("Key saved in the Windows Credential Manager.")
+      : tr("No API key yet — only the Anthropic API chat option needs one.");
+    field.placeholder = present ? tr("••••••••••••  (stored)") : "sk-ant-...";
     clearBtn.style.display = present ? "" : "none";
   }
 
@@ -212,10 +209,10 @@ function apiSection(hasKey: boolean): HTMLElement {
     try {
       await Bridge.secretSet("anthropic-api-key", value);
       field.value = "";
-      feedback.append(h("div", { class: "notice ok", text: "Saved. It never touches disk." }));
+      feedback.append(h("div", { class: "notice ok", text: tr("Saved. It never touches disk.") }));
       await refresh();
     } catch (err) {
-      feedback.append(h("div", { class: "notice err", text: `Could not save: ${String(err)}` }));
+      feedback.append(h("div", { class: "notice err", text: formatText("template.saveError", { error: String(err) }) }));
     }
   });
 
@@ -223,10 +220,10 @@ function apiSection(hasKey: boolean): HTMLElement {
     clear(feedback);
     try {
       await Bridge.secretClear("anthropic-api-key");
-      feedback.append(h("div", { class: "notice ok", text: "Key removed." }));
+      feedback.append(h("div", { class: "notice ok", text: tr("Key removed.") }));
       await refresh();
     } catch (err) {
-      feedback.append(h("div", { class: "notice err", text: `Could not remove: ${String(err)}` }));
+      feedback.append(h("div", { class: "notice err", text: formatText("template.removeError", { error: String(err) }) }));
     }
   });
 
@@ -246,10 +243,10 @@ function apiSection(hasKey: boolean): HTMLElement {
   return h(
     "section",
     {},
-    h("h2", {}, dot, h("span", { text: "Claude" })),
+    h("h2", {}, dot, h("span", { text: tr("Anthropic API chat") })),
     state,
-    h("div", { class: "row" }, h("label", { text: "API key" }), field, saveBtn, clearBtn),
-    h("div", { class: "row" }, h("label", { text: "Model" }), model),
+    h("div", { class: "row" }, h("label", { text: tr("API key") }), field, saveBtn, clearBtn),
+    h("div", { class: "row" }, h("label", { text: tr("Model") }), model),
     feedback,
   );
 }
@@ -266,22 +263,22 @@ interface IntegrationDef {
 
 const INTEGRATIONS: IntegrationDef[] = [
   { id: "integration_stripe", name: "Stripe", color: "#0570DE",
-    fields: [{ key: "stripe-api-key", label: "Secret key", placeholder: "sk_live_…", secret: true }] },
+    fields: [{ key: "stripe-api-key", label: tr("Secret key"), placeholder: "sk_live_…", secret: true }] },
   { id: "integration_github", name: "GitHub", color: "#F4505E",
     fields: [{ key: "github-token", label: "Token", placeholder: "ghp_…", secret: true }] },
   { id: "integration_vercel", name: "Vercel", color: "#7C5CFF",
     fields: [{ key: "vercel-token", label: "Token", placeholder: "…", secret: true }] },
   { id: "integration_n8n", name: "n8n", color: "#F29B38",
     fields: [
-      { key: "n8n-url", label: "Instance URL", placeholder: "https://n8n.example.com", secret: false },
-      { key: "n8n-api-key", label: "API key", placeholder: "…", secret: true },
+      { key: "n8n-url", label: tr("Instance URL"), placeholder: "https://n8n.example.com", secret: false },
+      { key: "n8n-api-key", label: tr("API key"), placeholder: "…", secret: true },
     ] },
   { id: "integration_resend", name: "Resend", color: "#22C55E",
-    fields: [{ key: "resend-api-key", label: "API key", placeholder: "re_…", secret: true }] },
+    fields: [{ key: "resend-api-key", label: tr("API key"), placeholder: "re_…", secret: true }] },
   { id: "integration_notion", name: "Notion", color: "#8C8C8C",
-    fields: [{ key: "notion-api-key", label: "Integration token", placeholder: "ntn_…", secret: true }] },
+    fields: [{ key: "notion-api-key", label: tr("Integration token"), placeholder: "ntn_…", secret: true }] },
   { id: "integration_calcom", name: "Cal.com", color: "#C9956A",
-    fields: [{ key: "calcom-api-key", label: "API key", placeholder: "cal_…", secret: true }] },
+    fields: [{ key: "calcom-api-key", label: tr("API key"), placeholder: "cal_…", secret: true }] },
 ];
 
 const MAX_ACTIVE = 4;
@@ -292,7 +289,7 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
 
   function updateNote() {
     const used = settings.activeIntegrations.length;
-    note.textContent = `Pick up to ${MAX_ACTIVE} pills to show next to Mochi — ${used}/${MAX_ACTIVE} in use. Keys are stored in the Windows Credential Manager, never on disk.`;
+    note.textContent = formatText("template.integrationLimit", { max: MAX_ACTIVE, used });
   }
 
   for (const def of INTEGRATIONS) {
@@ -315,12 +312,12 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
     for (const field of def.fields) {
       const input = h("input", {
         type: field.secret ? "password" : "text",
-        placeholder: present[field.key] ? "••••••••  (stored)" : field.placeholder,
+        placeholder: present[field.key] ? tr("••••••••  (stored)") : field.placeholder,
         autocomplete: "off",
         spellcheck: "false",
         style: "flex:1 1 auto;min-width:0",
       }) as HTMLInputElement;
-      const saveBtn = h("button", { text: "Save" });
+      const saveBtn = h("button", { text: tr("Save") });
       const dotEl = statusDot(present[field.key] ?? false);
       saveBtn.addEventListener("click", async () => {
         const value = input.value.trim();
@@ -328,7 +325,7 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
           await Bridge.secretSet(field.key, value);
           present[field.key] = value.length > 0;
           input.value = "";
-          input.placeholder = value ? "••••••••  (stored)" : field.placeholder;
+          input.placeholder = value ? tr("••••••••  (stored)") : field.placeholder;
           dotEl.style.background = value ? "#22c55e" : "#f4505e";
         } catch {
           dotEl.style.background = "#f5a524";
@@ -355,12 +352,24 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
   }
 
   updateNote();
-  return h("section", {}, h("h2", {}, h("span", { text: "Integrations" })), note, list);
+  return h("section", {}, h("h2", {}, h("span", { text: tr("Integrations") })), note, list);
 }
 
 // ── General section ───────────────────────────────────────────────────────────
 
 function generalSection(): HTMLElement {
+  const visibility = h("select", { "aria-label": tr("visibility.label") }) as HTMLSelectElement;
+  visibility.append(
+    h("option", { value: "always", text: tr("visibility.always") }),
+    h("option", { value: "autoHide", text: tr("visibility.autoHide") }),
+  );
+  visibility.value = settings.visibilityMode;
+  visibility.addEventListener("change", () => {
+    settings.visibilityMode = visibility.value === "autoHide" ? "autoHide" : "always";
+    void save();
+  });
+  const pinned = toggle(settings.userPinned, (value) => { settings.userPinned = value; void save(); });
+  pinned.setAttribute("aria-label", tr("pin.label"));
   const volume = h("input", {
     type: "range", min: "0", max: "0.2", step: "0.005",
     value: String(settings.soundVolume),
@@ -383,35 +392,44 @@ function generalSection(): HTMLElement {
 
   const screen = h("select", {}) as HTMLSelectElement;
   screen.append(
-    h("option", { value: "primary", text: "Main display" }),
-    h("option", { value: "cursor", text: "Display under the cursor" }),
+    h("option", { value: "primary", text: tr("Main display") }),
+    h("option", { value: "cursor", text: tr("Display under the cursor") }),
   );
   screen.value = settings.screen;
   screen.addEventListener("change", () => {
     settings.screen = screen.value as Settings["screen"];
     void save();
   });
+  syncGeneral = () => {
+    visibility.value = settings.visibilityMode;
+    pinned.classList.toggle("on", settings.userPinned);
+    pinned.setAttribute("aria-pressed", String(settings.userPinned));
+  };
 
   return h(
     "section",
     {},
-    h("h2", {}, h("span", { text: "General" })),
+    h("h2", {}, h("span", { text: tr("General") })),
+    h("div", { class: "row" }, h("label", { text: tr("visibility.label") }), visibility),
+    h("div", { class: "hint", text: tr("visibility.hint") }),
+    h("div", { class: "row" }, h("label", { text: tr("pin.label") }), pinned),
+    h("div", { class: "hint", text: tr("pin.hint") }),
     h("div", { class: "row" },
-      h("label", { text: "Sound" }),
+      h("label", { text: tr("Sound") }),
       toggle(settings.soundEnabled, (v) => { settings.soundEnabled = v; void save(); }),
       volume,
     ),
     h("div", { class: "row" },
-      h("label", { text: "Auto-close" }),
+      h("label", { text: tr("Auto-close") }),
       autoClose,
-      h("span", { class: "hint", text: "seconds after you leave the island" }),
+      h("span", { class: "hint", text: tr("seconds after you leave the island") }),
     ),
     h("div", { class: "row" },
-      h("label", { text: "Island lives on" }),
+      h("label", { text: tr("Island lives on") }),
       screen,
     ),
     h("div", { class: "row" },
-      h("label", { text: "Launch at startup" }),
+      h("label", { text: tr("Launch at startup") }),
       toggle(settings.autostart, (v) => { settings.autostart = v; void save(); }),
     ),
   );
@@ -425,9 +443,10 @@ async function main() {
     settings = { ...settings, ...boot.settings };
     version = boot.version;
   }
-  const status = (await Bridge.hooksStatus()) ?? {
-    installed: false, settingsPath: "", hookPath: "", hookReady: false,
-  };
+  const agentStates = await Promise.all(CLI_AGENTS.map(async (def) => {
+    try { return { status: await Bridge.agentHooksStatus(def.agent), error: null }; }
+    catch (err) { return { status: null, error: String(err).replace(/^Error:\s*/, "") }; }
+  }));
 
   const hasKey = (await Bridge.secretPresent("anthropic-api-key")) ?? false;
 
@@ -441,18 +460,20 @@ async function main() {
   clear(root);
   root.append(
     h("h1", {}, h("span", { text: "Coucou" }), h("span", { class: "version", text: version })),
-    claudeSection(status),
+    h("section", {}, h("h2", {}, h("span", { text: tr("Chat through local CLIs") })), h("div", { class: "hint", text: tr("Choose Codex, Claude Code, Gemini or Copilot in the island chat, then enter the project folder. Each CLI uses its own existing login and usage limits. CLI chat does not need the Anthropic API key or activity hooks. Start in read-only mode; allowing changes is an explicit choice per conversation.") })),
+    ...CLI_AGENTS.map((def, index) => agentSection(def, agentStates[index].status, agentStates[index].error)),
     apiSection(hasKey),
     integrationsSection(present),
     generalSection(),
     h("div", {
       class: "hint",
-      text: "No telemetry. Network requests only go to the services you configure yourself.",
+      text: tr("No telemetry. Network requests only go to the services you configure yourself."),
     }),
   );
 
   void onEvent<Settings>("settings-changed", (s) => {
     settings = { ...settings, ...s };
+    syncGeneral();
   });
 }
 

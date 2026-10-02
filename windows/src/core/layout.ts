@@ -17,6 +17,8 @@ export type IslandViewName =
   | "choose"
   | "mail"
   | "prompt"
+  | "learned"
+  | "activity"
   | "searching"
   | "result"
   | "note"
@@ -81,6 +83,8 @@ export const VIEW_LAYOUTS: Record<IslandViewName, ViewLayout> = {
   choose: { height: 176, botX: 60, botY: 101, botDiameter: 52, agentMode: "column" },
   mail: { height: 240, botX: 56, botY: null, botDiameter: 46, agentMode: "column" },
   prompt: { height: 160, botX: 52, botY: null, botDiameter: 44, agentMode: "column" },
+  learned: { height: PANEL_H, botX: 52, botY: null, botDiameter: 44, agentMode: "none" },
+  activity: { height: PANEL_H, botX: 52, botY: null, botDiameter: 44, agentMode: "none" },
   searching: { height: 160, botX: 52, botY: null, botDiameter: 44, agentMode: "column" },
   result: { height: 160, botX: 52, botY: null, botDiameter: 44, agentMode: "column" },
   note: { height: 160, botX: 60, botY: null, botDiameter: 50, agentMode: "column" },
@@ -93,8 +97,9 @@ export const VIEW_LAYOUTS: Record<IslandViewName, ViewLayout> = {
 // owns its own constants (USC) straight from UploadSequenceEngine.swift.
 
 /** Chat view grows with the conversation — IslandContainer.chatPromptHeight. */
-export function chatPromptHeight(messageCount: number): number {
-  return Math.min(300, 240 + messageCount * 40);
+export function chatPromptHeight(_messageCount: number): number {
+  // CLI project controls and permission details need the full panel height.
+  return PANEL_H;
 }
 
 export function islandSize(

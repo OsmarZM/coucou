@@ -1,25 +1,35 @@
 // Coucou for Windows — app wiring and the commands the island calls.
 
+mod agent_chat;
+mod approvals;
+mod capabilities;
 mod claude;
+pub mod documents;
+mod file_dialog;
 mod files;
 mod hooks;
 mod integrations;
 mod island;
 mod log;
+mod memory;
+mod personal_commands;
+mod personal_runtime;
 mod pipe;
+mod privacy;
 mod secrets;
 mod settings;
 mod tray;
+mod usage;
 mod win_user;
 
 use std::os::windows::process::CommandExt;
 use std::process::Command;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
-use tauri_plugin_autostart::{ManagerExt, MacosLauncher};
+use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
 use claude::{Chat, ChatContext, ChatReply};
 use files::DroppedFile;
@@ -34,6 +44,11 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 pub struct Shared {
     pub settings: Mutex<Settings>,
     pub gate: Arc<PollGate>,
+    pub paused: AtomicBool,
+}
+pub struct PersonalStore {
+    pub memory: Result<memory::MemoryService, String>,
+    pub documents: Result<documents::DocumentService, String>,
 }
 
 #[derive(Serialize)]
@@ -73,7 +88,11 @@ fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
     }
     if autostart_changed {
         let manager = app.autolaunch();
-        let result = if settings.autostart { manager.enable() } else { manager.disable() };
+        let result = if settings.autostart {
+            manager.enable()
+        } else {
+            manager.disable()
+        };
         if let Err(err) = result {
             eprintln!("[coucou] autostart: {err}");
         }
@@ -102,12 +121,19 @@ fn set_collapsed(app: AppHandle, shared: State<Shared>, collapsed: bool) {
 /// The front end pushes the island shape; Rust decides click-through from it.
 #[tauri::command]
 fn set_island_rect(shared: State<Shared>, x: f64, y: f64, width: f64, height: f64) {
-    shared.gate.set_rect(island::IslandRect { x, y, w: width, h: height });
+    shared.gate.set_rect(island::IslandRect {
+        x,
+        y,
+        w: width,
+        h: height,
+    });
 }
 
 #[tauri::command]
 fn focus_window(app: AppHandle, focused: bool) {
-    let Some(win) = island::window(&app) else { return };
+    let Some(win) = island::window(&app) else {
+        return;
+    };
     island::set_activating(&win, focused);
     if focused {
         let _ = win.set_focus();
@@ -174,13 +200,20 @@ fn find_on_path(stem: &str) -> Option<std::path::PathBuf> {
 
 #[tauri::command]
 fn quit_app(app: AppHandle) {
+    app.state::<agent_chat::AgentChat>().cancel_all();
+    pipe::cancel_all(&app);
     app.exit(0);
 }
 
 /// Tray → Pause. Paused means paused: the pollers stop talking to the network,
 /// not just the island stopping showing things.
 #[tauri::command]
-fn set_paused(paused: bool) {
+fn set_paused(app: AppHandle, shared: State<Shared>, paused: bool) {
+    shared.paused.store(paused, Ordering::Relaxed);
+    if paused {
+        pipe::cancel_all(&app);
+        app.state::<agent_chat::AgentChat>().cancel_all();
+    }
     integrations::set_paused(paused);
 }
 
@@ -219,16 +252,71 @@ fn hooks_apply(
 }
 
 #[tauri::command]
-fn approval_decision(app: AppHandle, request_id: String, decision: String) {
-    pipe::answer(&app, &request_id, &decision);
+fn agent_hooks_status(agent: String) -> Result<HookStatus, String> {
+    hooks::agent_status(&agent)
+}
+
+#[tauri::command]
+fn agent_hooks_preview(agent: String, install: bool) -> Result<HookPreview, String> {
+    hooks::agent_preview(&agent, install)
+}
+
+#[tauri::command]
+fn agent_hooks_apply(
+    app: AppHandle,
+    shared: State<Shared>,
+    agent: String,
+    install: bool,
+    fingerprint: String,
+) -> Result<String, String> {
+    let backup = hooks::agent_write(&agent, install, &fingerprint)?;
+    let updated = {
+        let mut current = shared.settings.lock().unwrap();
+        // Keep the older preference compatible; live status for all agents is
+        // read from their actual configuration rather than a cached boolean.
+        current.hooks_installed = hooks::status().installed;
+        if let Err(error) = settings::save(&current) {
+            log::line(format!(
+                "hooks applied; could not persist compatibility preference: {error}"
+            ));
+        }
+        current.clone()
+    };
+    let _ = app.emit("settings-changed", updated);
+    Ok(backup)
+}
+
+#[tauri::command]
+fn approval_decision(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    shared: State<Shared>,
+    request_id: String,
+    decision: String,
+) -> bool {
+    if window.label() != island::WINDOW_LABEL
+        || !window.is_focused().unwrap_or(false)
+        || shared.paused.load(Ordering::Relaxed)
+    {
+        pipe::decline(&app, &request_id);
+        return false;
+    }
+    pipe::answer(&app, &request_id, &decision)
 }
 
 /// The island has the card on screen, so the long wait for a human may begin.
 /// Until this arrives the relay only waits a few hundred milliseconds, which is
 /// what stops a paused or unresponsive island from freezing Claude Code.
 #[tauri::command]
-fn approval_ack(app: AppHandle, request_id: String) {
-    pipe::acknowledge(&app, &request_id);
+fn approval_ack(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    shared: State<Shared>,
+    request_id: String,
+) {
+    if window.label() == island::WINDOW_LABEL && !shared.paused.load(Ordering::Relaxed) {
+        pipe::acknowledge(&app, &request_id);
+    }
 }
 
 /// Nobody can act on this request — the island is paused, or another card is
@@ -255,6 +343,57 @@ async fn chat_send(
 #[tauri::command]
 fn chat_reset(chat: State<Chat>) {
     chat.reset();
+}
+
+#[tauri::command]
+fn agent_chat_status() -> Vec<agent_chat::CliStatus> {
+    agent_chat::status()
+}
+
+#[tauri::command]
+fn agent_chat_start(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    shared: State<Shared>,
+    chat: State<agent_chat::AgentChat>,
+    request: agent_chat::StartRequest,
+) -> Result<(), String> {
+    if window.label() != island::WINDOW_LABEL || shared.paused.load(Ordering::Relaxed) {
+        return Err("CLI chat is unavailable while Coucou is paused.".into());
+    }
+    chat.start(app, request)
+}
+
+#[tauri::command]
+fn agent_chat_cancel(
+    window: tauri::WebviewWindow,
+    chat: State<agent_chat::AgentChat>,
+    conversation_id: String,
+    run_id: String,
+) -> bool {
+    window.label() == island::WINDOW_LABEL && chat.cancel(&conversation_id, &run_id)
+}
+
+#[tauri::command]
+fn agent_chat_decide(
+    window: tauri::WebviewWindow,
+    shared: State<Shared>,
+    chat: State<agent_chat::AgentChat>,
+    conversation_id: String,
+    run_id: String,
+    request_id: String,
+    decision: String,
+) -> bool {
+    if window.label() != island::WINDOW_LABEL {
+        return false;
+    }
+    if matches!(decision.as_str(), "allow" | "allowConversation")
+        && (!window.is_focused().unwrap_or(false) || shared.paused.load(Ordering::Relaxed))
+    {
+        chat.decide(&conversation_id, &run_id, &request_id, "deny");
+        return false;
+    }
+    chat.decide(&conversation_id, &run_id, &request_id, &decision)
 }
 
 /// Copies a dropped file into the inbox and reports its name back.
@@ -328,7 +467,7 @@ fn create_settings_window(app: &AppHandle) {
     let url = settings_page_url(app);
     match WebviewWindowBuilder::new(app, "settings", url)
         .additional_browser_args(BROWSER_ARGS)
-        .title("Settings — Coucou")
+        .title("Configurações — Coucou")
         .inner_size(560.0, 680.0)
         .min_inner_size(460.0, 480.0)
         .resizable(true)
@@ -373,13 +512,28 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             let _ = app.emit_to(island::WINDOW_LABEL, "tray", "open".to_string());
         }))
-        .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            None,
+        ))
         .manage(Shared {
             settings: Mutex::new(loaded.clone()),
             gate: gate.clone(),
+            paused: AtomicBool::new(false),
         })
         .manage(Pending::default())
         .manage(Chat::default())
+        .manage(agent_chat::AgentChat::default())
+        .manage(PersonalStore {
+            memory: memory::MemoryService::open(
+                settings::local_dir().join("personal").join("state.db"),
+            )
+            .and_then(|service| {
+                service.enable_automatic_personal_context()?;
+                Ok(service)
+            }),
+            documents: documents::DocumentService::new(settings::local_dir().join("documents")),
+        })
         .invoke_handler(tauri::generate_handler![
             boot,
             save_settings,
@@ -393,12 +547,49 @@ pub fn run() {
             hooks_status,
             hooks_preview,
             hooks_apply,
+            agent_hooks_status,
+            agent_hooks_preview,
+            agent_hooks_apply,
             approval_decision,
             approval_ack,
             approval_decline,
             log_line,
             chat_send,
             chat_reset,
+            agent_chat_status,
+            agent_chat_start,
+            agent_chat_cancel,
+            agent_chat_decide,
+            personal_commands::memory_preferences,
+            personal_commands::memory_set_preferences,
+            personal_commands::memory_list,
+            personal_commands::memory_propose,
+            personal_commands::memory_approve,
+            personal_commands::memory_reject,
+            personal_commands::memory_forget,
+            personal_commands::memory_export,
+            personal_commands::skills_list,
+            personal_commands::skills_propose,
+            personal_commands::skills_approve,
+            personal_commands::skills_reject,
+            personal_commands::skills_forget,
+            personal_commands::skills_diff,
+            personal_commands::skills_load,
+            personal_commands::skills_export,
+            personal_commands::skills_import,
+            personal_commands::skills_restore,
+            personal_commands::history_list,
+            personal_commands::history_search,
+            personal_commands::history_context,
+            personal_commands::history_messages,
+            personal_commands::history_forget,
+            personal_commands::permissions_revoke,
+            personal_commands::documents_ingest,
+            personal_commands::documents_choose,
+            personal_commands::documents_list,
+            personal_commands::documents_remove,
+            personal_commands::documents_prepare,
+            personal_commands::documents_read,
             ingest_file,
             secret_present,
             secret_set,
@@ -423,7 +614,10 @@ pub fn run() {
             gate.set_active(true);
             island::spawn_cursor_poll(handle.clone(), gate.clone());
 
-            log::line(format!("--- Coucou {} started ---", env!("CARGO_PKG_VERSION")));
+            log::line(format!(
+                "--- Coucou {} started ---",
+                env!("CARGO_PKG_VERSION")
+            ));
             hooks::ensure_hook_exe(&handle);
             pipe::start(handle.clone());
             integrations::start(handle.clone());

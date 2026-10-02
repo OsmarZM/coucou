@@ -1,64 +1,194 @@
-//! coucou-hook — the relay Claude Code runs on every hook event.
+//! coucou-hook — a small relay for Claude, Codex, Gemini and Copilot CLI hooks.
 //!
-//! Reads the hook JSON on stdin, adds a little terminal context, and hands it to
-//! Coucou over the named pipe `\\.\pipe\coucou-<sid>`.
+//! Reads bounded JSON stdin under a deadline, builds an allowlisted event and
+//! sends it to `\\.\pipe\coucou-<sid>` after checking the server's user. Only
+//! inspectable Claude PermissionRequest events wait for an explicit UI answer.
+//! Silence/timeout/failure always returns to the CLI's native permission flow.
 //!
-//! Hard rule (docs/CLAUDE.md): **never block Claude Code.**
-//! * If the pipe does not exist — Coucou is closed — we exit 0 immediately with
-//!   nothing on stdout, and the session carries on untouched.
-//! * Every step runs under a deadline enforced by the main thread, so a pipe that
-//!   accepts the connection and then stops reading cannot wedge the session
-//!   either: we abandon the worker and exit.
-//! * Only `PermissionRequest` waits for an answer, because approving from the
-//!   island is the whole point. No answer means empty stdout, and Claude Code
-//!   asks in the terminal exactly as if Coucou were not installed.
-//!
-//! Usage: `coucou-hook <EventName>` (the name is also read from the JSON).
+//! Legacy: `coucou-hook <EventName>` (Claude).
+//! Multiagent: `coucou-hook --agent codex --event PreToolUse`.
 
+use coucou_agent_protocol::{normalize, Agent, AgentEvent, MAX_PAYLOAD_BYTES};
 use std::io::{Read, Write};
 use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-/// Budget for getting a pipe connection. Beyond this Claude Code wins, always.
-const CONNECT_TIMEOUT: Duration = Duration::from_millis(300);
-/// Whole-run budget for an event nobody waits on: connect and write, no more.
-const FIRE_AND_FORGET_BUDGET: Duration = Duration::from_secs(2);
-/// How long a permission prompt may stay on screen before the terminal takes over.
+const INPUT_BUDGET: Duration = Duration::from_millis(500);
+const MAX_STDIN_BYTES: usize = 1024 * 1024;
+const MAX_DECISION_BYTES: usize = 128;
+const FIRE_AND_FORGET_BUDGET: Duration = Duration::from_millis(1200);
 const DECISION_BUDGET: Duration = Duration::from_secs(110);
 
-/// `ERROR_PIPE_BUSY` — every instance is serving someone else right now. This is
-/// the one error worth retrying: the server exists and a slot will free up.
-const ERROR_PIPE_BUSY: i32 = 231;
-
-/// Fields that are pointless to forward and can be enormous (a whole file read,
-/// a full command output). The island never shows them.
-const DROPPED_FIELDS: &[&str] = &["tool_response", "transcript_path"];
-/// Longest string forwarded for any single field; the island truncates to far
-/// less than this anyway.
-const MAX_FIELD_LEN: usize = 2_000;
-
+#[cfg(windows)]
 mod win;
 
-/// `\\.\pipe\coucou-<sid>`. The SID keeps two accounts on the same machine from
-/// ever meeting on the same pipe; the name falls back to the user name only if
-/// the SID cannot be read at all, which should not happen.
-fn pipe_path() -> String {
-    let key = win::current_user_sid()
-        .unwrap_or_else(|| std::env::var("USERNAME").unwrap_or_else(|_| "user".into()));
-    format!(r"\\.\pipe\coucou-{key}")
+#[derive(Clone, Debug, PartialEq)]
+struct Invocation {
+    agent: Agent,
+    event: String,
 }
 
-/// Opens the pipe. Retries only while the server is busy: any other error means
-/// there is nothing to talk to, and waiting would only delay Claude Code.
+fn parse_args(args: &[String]) -> Option<Invocation> {
+    let mut agent = None;
+    let mut event = None;
+    let mut legacy_event = None;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--agent" if agent.is_none() => {
+                index += 1;
+                agent = Some(Agent::from_name(args.get(index)?)?);
+            }
+            "--event" if event.is_none() => {
+                index += 1;
+                let value = args.get(index)?;
+                if value.is_empty() || value.starts_with('-') {
+                    return None;
+                }
+                event = Some(value.clone());
+            }
+            "--coucou-managed-v1" => {}
+            value if !value.starts_with('-') && legacy_event.is_none() => {
+                legacy_event = Some(value.to_owned());
+            }
+            _ => return None,
+        }
+        index += 1;
+    }
+    if legacy_event.is_some() && (agent.is_some() || event.is_some()) {
+        return None;
+    }
+    Some(Invocation {
+        agent: agent.unwrap_or(Agent::Claude),
+        // Old integrations may provide the name exclusively in native stdin.
+        event: event.or(legacy_event).unwrap_or_default(),
+    })
+}
+
+fn main() {
+    let args: Vec<_> = std::env::args().skip(1).collect();
+    // Even malformed Gemini invocations must emit valid neutral JSON instead
+    // of turning a monitoring error into a warning/blocking response.
+    let response_agent = args
+        .windows(2)
+        .find(|pair| pair[0] == "--agent")
+        .and_then(|pair| Agent::from_name(&pair[1]))
+        .unwrap_or(Agent::Claude);
+    let decision = parse_args(&args).and_then(run);
+    if let Some(json) = response_json(response_agent, decision.as_deref()) {
+        let mut out = std::io::stdout().lock();
+        let _ = writeln!(out, "{json}");
+        let _ = out.flush();
+    }
+    // Detached workers can be stuck in stdin/pipe I/O. Process termination
+    // closes their handles instead of waiting for them after the deadline.
+    std::process::exit(0);
+}
+
+fn run(invocation: Invocation) -> Option<String> {
+    let event = read_event_with_deadline(invocation)?;
+    let waits_for_answer = event.requires_approval;
+    let mut line = serde_json::to_string(&event).ok()?;
+    if line.len() >= MAX_PAYLOAD_BYTES {
+        return None;
+    }
+    line.push('\n');
+    let budget = if waits_for_answer {
+        DECISION_BUDGET
+    } else {
+        FIRE_AND_FORGET_BUDGET
+    };
+    let (tx, rx) = mpsc::channel();
+    std::thread::Builder::new()
+        .name("coucou-relay".into())
+        .spawn(move || {
+            let _ = tx.send(talk(&line, waits_for_answer));
+        })
+        .ok()?;
+    rx.recv_timeout(budget).ok().flatten()
+}
+
+fn read_event_with_deadline(invocation: Invocation) -> Option<AgentEvent> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::Builder::new()
+        .name("coucou-hook-input".into())
+        .spawn(move || {
+            let event = read_event(std::io::stdin().lock(), &invocation);
+            let _ = tx.send(event);
+        })
+        .ok()?;
+    rx.recv_timeout(INPUT_BUDGET).ok().flatten()
+}
+
+fn read_event(reader: impl Read, invocation: &Invocation) -> Option<AgentEvent> {
+    let mut raw = Vec::new();
+    reader
+        .take((MAX_STDIN_BYTES + 1) as u64)
+        .read_to_end(&mut raw)
+        .ok()?;
+    if raw.is_empty() || raw.len() > MAX_STDIN_BYTES {
+        return None;
+    }
+    // Some shells prefix JSON with a UTF-8 BOM.
+    let bytes = raw.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&raw);
+    let mut payload = serde_json::from_slice::<serde_json::Value>(bytes).ok()?;
+    if !payload.is_object() {
+        return None;
+    }
+    // Preserve the existing project fallback, never use cwd as session identity.
+    if payload
+        .get("cwd")
+        .and_then(|value| value.as_str())
+        .is_none_or(str::is_empty)
+    {
+        if let Ok(cwd) = std::env::current_dir() {
+            payload["cwd"] = serde_json::Value::String(cwd.to_string_lossy().into_owned());
+        }
+    }
+    normalize(invocation.agent, &invocation.event, &payload)
+        .ok()
+        .flatten()
+}
+
+/// Gemini requires JSON stdout. Empty objects grant no permission and modify
+/// no flow-control fields. Codex/Copilot/Claude observation hooks remain silent.
+fn response_json(agent: Agent, decision: Option<&str>) -> Option<String> {
+    if agent == Agent::Gemini {
+        return Some("{}".into());
+    }
+    if agent != Agent::Claude {
+        return None;
+    }
+    let behavior = match decision?.trim() {
+        // Remembering an allowance is the island's concern, never the relay's.
+        "allow" | "always" => r#"{"behavior":"allow"}"#,
+        "deny" => r#"{"behavior":"deny","message":"Denied from Coucou"}"#,
+        _ => return None,
+    };
+    Some(format!(
+        r#"{{"hookSpecificOutput":{{"hookEventName":"PermissionRequest","decision":{behavior}}}}}"#
+    ))
+}
+
+#[cfg(windows)]
 fn connect() -> Option<std::fs::File> {
     use std::os::windows::io::AsRawHandle;
-    let path = pipe_path();
+    use std::time::Instant;
+    const ERROR_PIPE_BUSY: i32 = 231;
+    const CONNECT_TIMEOUT: Duration = Duration::from_millis(200);
+    // Fail closed if our SID is unavailable: a user-name pipe fallback could
+    // collide with another account and is unnecessary for supported Windows.
+    let sid = win::current_user_sid()?;
+    let path = format!(r"\\.\pipe\coucou-{sid}");
     let deadline = Instant::now() + CONNECT_TIMEOUT;
     loop {
-        match std::fs::OpenOptions::new().read(true).write(true).open(&path) {
+        match std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+        {
             Ok(file) => {
                 let handle = windows::Win32::Foundation::HANDLE(file.as_raw_handle());
-                // Somebody else's server on our pipe name gets nothing from us.
                 return win::pipe_server_is_same_user(handle).then_some(file);
             }
             Err(err) => {
@@ -71,196 +201,222 @@ fn connect() -> Option<std::fs::File> {
     }
 }
 
-fn main() {
-    let Some((payload, event)) = read_event() else { std::process::exit(0) };
-
-    let waits_for_answer = event == "PermissionRequest";
-    let budget = if waits_for_answer { DECISION_BUDGET } else { FIRE_AND_FORGET_BUDGET };
-
-    // The worker owns every blocking call. If it overruns the budget we simply
-    // stop listening and exit: the process dying takes the pipe handle with it.
-    // (No catch_unwind here — the release profile is panic = "abort", so it would
-    // be dead code. `talk` is written to have nothing to panic on instead.)
-    let (tx, rx) = mpsc::channel::<Option<String>>();
-    std::thread::spawn(move || {
-        let _ = tx.send(talk(&payload, waits_for_answer));
-    });
-
-    if let Ok(Some(decision)) = rx.recv_timeout(budget) {
-        if let Some(json) = decision_json(&decision) {
-            let mut out = std::io::stdout();
-            let _ = writeln!(out, "{json}");
-            let _ = out.flush();
-        }
-    }
-    // Nothing printed: Claude Code asks in the terminal, as if we were not here.
-    std::process::exit(0);
+#[cfg(not(windows))]
+fn connect() -> Option<std::fs::File> {
+    None
 }
 
-/// The documented PermissionRequest output. Anything we do not recognise prints
-/// nothing at all rather than guessing — silence is the safe answer.
-/// See https://code.claude.com/docs/en/hooks
-fn decision_json(decision: &str) -> Option<String> {
-    let behavior = match decision.trim() {
-        // "always" still answers a plain allow; remembering it is the island's
-        // business, not Claude Code's.
-        "allow" | "always" => r#"{"behavior":"allow"}"#.to_string(),
-        "deny" => r#"{"behavior":"deny","message":"Denied from Coucou"}"#.to_string(),
-        _ => return None,
-    };
-    Some(format!(
-        r#"{{"hookSpecificOutput":{{"hookEventName":"PermissionRequest","decision":{behavior}}}}}"#
-    ))
-}
-
-/// Reads stdin and returns the payload to forward plus the event name.
-fn read_event() -> Option<(String, String)> {
-    let mut raw = Vec::new();
-    if std::io::stdin().read_to_end(&mut raw).is_err() || raw.is_empty() {
-        return None;
-    }
-    // Some shells hand us a UTF-8 BOM; serde_json would choke on it.
-    if raw.starts_with(&[0xEF, 0xBB, 0xBF]) {
-        raw.drain(..3);
-    }
-
-    let mut payload = serde_json::from_slice::<serde_json::Value>(&raw).ok()?;
-    let map = payload.as_object_mut()?;
-
-    // The event name is passed as argv[1] by the hook command; the JSON usually
-    // carries it too. Trust argv when the JSON is missing it.
-    let arg_event = std::env::args().nth(1).unwrap_or_default();
-    let event = map
-        .get("hook_event_name")
-        .and_then(|v| v.as_str())
-        .map(str::to_string)
-        .filter(|s| !s.is_empty())
-        .unwrap_or(arg_event);
-    map.insert("hook_event_name".into(), serde_json::Value::String(event.clone()));
-
-    for field in DROPPED_FIELDS {
-        map.remove(*field);
-    }
-
-    let cwd_missing = map
-        .get("cwd")
-        .and_then(|v| v.as_str())
-        .map(str::is_empty)
-        .unwrap_or(true);
-    if cwd_missing {
-        if let Ok(cwd) = std::env::current_dir() {
-            map.insert(
-                "cwd".into(),
-                serde_json::Value::String(cwd.to_string_lossy().to_string()),
-            );
-        }
-    }
-
-    // Which terminal the session runs in. Unlike macOS, Coucou on Windows accepts
-    // events from every terminal, so this is context only — never a filter.
-    for (key, var) in [
-        ("term_program", "TERM_PROGRAM"),
-        ("wt_session", "WT_SESSION"),
-        ("term_session_id", "TERM_SESSION_ID"),
-        ("vscode_pid", "VSCODE_PID"),
-        ("session_pid", "CLAUDE_CODE_SSE_PORT"),
-    ] {
-        if !map.contains_key(key) {
-            let value = std::env::var(var).unwrap_or_default();
-            map.insert(key.into(), serde_json::Value::String(value));
-        }
-    }
-
-    truncate_strings(&mut payload);
-
-    let mut line = payload.to_string();
-    line.push('\n');
-    Some((line, event))
-}
-
-/// Caps every string in the payload. A single Write can carry a whole file.
-fn truncate_strings(value: &mut serde_json::Value) {
-    match value {
-        serde_json::Value::String(s) => {
-            if s.len() > MAX_FIELD_LEN {
-                // Cut on a char boundary; a lone byte index can split UTF-8.
-                let mut end = MAX_FIELD_LEN;
-                while end > 0 && !s.is_char_boundary(end) {
-                    end -= 1;
-                }
-                s.truncate(end);
-                s.push('…');
-            }
-        }
-        serde_json::Value::Array(items) => items.iter_mut().for_each(truncate_strings),
-        serde_json::Value::Object(map) => map.values_mut().for_each(truncate_strings),
-        _ => {}
-    }
-}
-
-/// Connect, send, and — for a permission request — wait for the island's word.
 fn talk(payload: &str, waits_for_answer: bool) -> Option<String> {
     let mut pipe = connect()?;
+    exchange(&mut pipe, payload, waits_for_answer)
+}
 
-    if pipe.write_all(payload.as_bytes()).is_err() {
-        return None;
-    }
-    let _ = pipe.flush();
-
+fn exchange(
+    pipe: &mut (impl Read + Write),
+    payload: &str,
+    waits_for_answer: bool,
+) -> Option<String> {
+    pipe.write_all(payload.as_bytes()).ok()?;
+    pipe.flush().ok()?;
     if !waits_for_answer {
         return None;
     }
-
+    // A broken/spoofed/overlong reply must never become an allow. The backend
+    // emits a single bounded word followed by a newline.
     let mut buf = Vec::new();
-    let mut chunk = [0u8; 1024];
+    let mut chunk = [0u8; MAX_DECISION_BYTES + 1];
     loop {
         match pipe.read(&mut chunk) {
             Ok(0) => break,
             Ok(n) => {
                 buf.extend_from_slice(&chunk[..n]);
+                if buf.len() > MAX_DECISION_BYTES {
+                    return None;
+                }
                 if buf.contains(&b'\n') {
                     break;
                 }
             }
-            Err(_) => break,
+            Err(_) => return None,
         }
     }
-    let answer = String::from_utf8_lossy(&buf).trim().to_string();
-    (!answer.is_empty()).then_some(answer)
+    let answer = std::str::from_utf8(&buf).ok()?.trim();
+    matches!(answer, "allow" | "deny" | "always").then(|| answer.to_owned())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_owned()).collect()
+    }
 
     #[test]
-    fn decision_json_matches_the_documented_shape() {
+    fn legacy_and_multiagent_arguments_preserve_event_domains() {
         assert_eq!(
-            decision_json("allow").unwrap(),
+            parse_args(&args(&["PermissionRequest"])),
+            Some(Invocation {
+                agent: Agent::Claude,
+                event: "PermissionRequest".into()
+            })
+        );
+        assert_eq!(
+            parse_args(&args(&[
+                "--agent",
+                "copilot",
+                "--event",
+                "preToolUse",
+                "--coucou-managed-v1"
+            ])),
+            Some(Invocation {
+                agent: Agent::Copilot,
+                event: "preToolUse".into()
+            })
+        );
+        for invalid in [
+            args(&["--agent", "unknown"]),
+            args(&["--agent"]),
+            args(&["--event"]),
+            args(&["Stop", "--agent", "codex"]),
+            args(&["--agent", "gemini", "--agent", "claude"]),
+            args(&["--unknown"]),
+        ] {
+            assert!(parse_args(&invalid).is_none());
+        }
+    }
+
+    #[test]
+    fn malformed_and_oversized_stdin_is_neutral() {
+        let invocation = Invocation {
+            agent: Agent::Claude,
+            event: "SessionStart".into(),
+        };
+        for raw in [
+            b"".as_slice(),
+            b"not json",
+            b"[]",
+            b"{}",
+            b"{\"session_id\":4}",
+            &vec![b' '; MAX_STDIN_BYTES + 1],
+        ] {
+            assert!(read_event(raw, &invocation).is_none());
+        }
+        let original =
+            json!({"session_id":"s", "hook_event_name":"SessionStart", "prompt":"SECRET"})
+                .to_string();
+        let mut bom = vec![0xEF, 0xBB, 0xBF];
+        bom.extend_from_slice(original.as_bytes());
+        let event = read_event(bom.as_slice(), &invocation).unwrap();
+        assert!(!serde_json::to_string(&event).unwrap().contains("SECRET"));
+    }
+
+    #[test]
+    fn provider_neutral_output_never_grants_other_agents_permission() {
+        for decision in [
+            None,
+            Some("allow"),
+            Some("deny"),
+            Some("always"),
+            Some("unknown"),
+        ] {
+            assert_eq!(
+                response_json(Agent::Gemini, decision).as_deref(),
+                Some("{}")
+            );
+            assert!(response_json(Agent::Codex, decision).is_none());
+            assert!(response_json(Agent::Copilot, decision).is_none());
+        }
+        assert!(response_json(Agent::Claude, None).is_none());
+        assert!(response_json(Agent::Claude, Some("maybe")).is_none());
+        assert!(response_json(Agent::Claude, Some(r#"{"permissionDecision":"allow"}"#)).is_none());
+    }
+
+    #[test]
+    fn claude_explicit_decision_matches_native_permission_output() {
+        assert_eq!(
+            response_json(Agent::Claude, Some("allow")).unwrap(),
             r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}"#
         );
         assert_eq!(
-            decision_json("deny").unwrap(),
+            response_json(Agent::Claude, Some("deny")).unwrap(),
             r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"Denied from Coucou"}}}"#
         );
-        // "always" is an island concept; Claude Code just gets an allow.
-        assert!(decision_json("always").unwrap().contains(r#""behavior":"allow""#));
+        assert!(response_json(Agent::Claude, Some("always"))
+            .unwrap()
+            .contains(r#""behavior":"allow""#));
+    }
+
+    struct TestPipe {
+        answer: std::io::Cursor<Vec<u8>>,
+        written: Vec<u8>,
+        fail_write: bool,
+        reads: usize,
+    }
+
+    impl Read for TestPipe {
+        fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
+            self.reads += 1;
+            self.answer.read(output)
+        }
+    }
+
+    impl Write for TestPipe {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if self.fail_write {
+                Err(std::io::ErrorKind::BrokenPipe.into())
+            } else {
+                self.written.extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
 
     #[test]
-    fn anything_unrecognised_prints_nothing() {
-        assert!(decision_json("").is_none());
-        assert!(decision_json("maybe").is_none());
-        // The shape the app used to send must not be mistaken for a decision.
-        assert!(decision_json(r#"{"permissionDecision":"allow"}"#).is_none());
+    fn broken_oversized_empty_and_malformed_replies_never_become_allow() {
+        for reply in [
+            "".into(),
+            "unknown\n".into(),
+            "allow\nmalformed".into(),
+            format!("allow{}\n", " ".repeat(MAX_DECISION_BYTES)),
+            "{\"decision\":\"allow\"}\n".into(),
+        ] {
+            let mut pipe = TestPipe {
+                answer: std::io::Cursor::new(reply.into_bytes()),
+                written: Vec::new(),
+                fail_write: false,
+                reads: 0,
+            };
+            assert!(exchange(&mut pipe, "event\n", true).is_none());
+        }
+        let mut broken = TestPipe {
+            answer: std::io::Cursor::new(b"allow\n".to_vec()),
+            written: Vec::new(),
+            fail_write: true,
+            reads: 0,
+        };
+        assert!(exchange(&mut broken, "event\n", true).is_none());
+        assert_eq!(broken.reads, 0);
     }
 
     #[test]
-    fn long_strings_are_cut_on_a_char_boundary() {
-        let mut v = serde_json::json!({ "tool_input": { "content": "é".repeat(4000) } });
-        truncate_strings(&mut v);
-        let s = v["tool_input"]["content"].as_str().unwrap();
-        assert!(s.len() <= MAX_FIELD_LEN + 4);
-        assert!(s.ends_with('…'));
+    fn observation_never_reads_or_uses_a_permission_response() {
+        let mut pipe = TestPipe {
+            answer: std::io::Cursor::new(b"allow\n".to_vec()),
+            written: Vec::new(),
+            fail_write: false,
+            reads: 0,
+        };
+        assert!(exchange(&mut pipe, "normalized event\n", false).is_none());
+        assert_eq!(pipe.written, b"normalized event\n");
+        assert_eq!(pipe.reads, 0);
+        assert_eq!(
+            exchange(&mut pipe, "permission\n", true).as_deref(),
+            Some("allow")
+        );
     }
 }

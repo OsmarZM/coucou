@@ -2,8 +2,11 @@
 
 import type { BotEmoteName, BotStateName, IslandMode, IslandViewName } from "./layout";
 import type { EyeShape } from "../mochi/engine";
+import { AGENT_IDS, AGENT_META, agentForTask, SessionStore, type AgentId } from "./sessions";
+import { AgentChat } from "./agent-chat";
+import type { VisibilityMode } from "../island/fsm";
 
-export type AgentSource = "claudeCode" | "n8n";
+export type AgentSource = "claudeCode" | "codex" | "gemini" | "copilot" | "n8n";
 export type PillBadge = "approval" | "finished" | "error";
 
 export interface AgentTask {
@@ -19,6 +22,9 @@ export interface AgentTask {
   miniEye?: EyeShape | null;
   pillBadge?: PillBadge | null;
   sessionCwd?: string | null;
+  sessionId?: string | null;
+  sessionKey?: string | null;
+  projectName?: string | null;
 }
 
 export interface ApprovalInfo {
@@ -26,6 +32,9 @@ export interface ApprovalInfo {
   sessionId: string;
   tool: string;
   command: string;
+  taskId: string;
+  sessionKey: string;
+  generation: number;
 }
 
 export interface ChatMessage {
@@ -56,9 +65,12 @@ const task = (
   id, name, color, state: "idle", stepIndex: 0, steps: [], source, isIntegration: true,
 });
 
-/** AgentTask.integrationAgents — same ids, names and colours as macOS. */
+/** Agent groups remain fixed; sessions never create unbounded UI pills. */
 export const INTEGRATION_AGENTS: AgentTask[] = [
-  task("integration_claude", "VS Code", "#F5F6F8", "claudeCode"),
+  ...AGENT_IDS.map((agent) => {
+    const meta = AGENT_META[agent];
+    return task(meta.taskId, meta.name, meta.color, meta.source);
+  }),
   task("integration_resend", "Resend", "#22C55E", "n8n"),
   task("integration_n8n", "n8n", "#F29B38", "n8n"),
   task("integration_vercel", "Vercel", "#7C5CFF", "n8n"),
@@ -86,6 +98,8 @@ export interface Settings {
   soundVolume: number;
   autoCloseInterval: number;
   absenceInterval: number;
+  visibilityMode: VisibilityMode;
+  userPinned: boolean;
   activeIntegrations: string[];
   screen: "primary" | "cursor";
   autostart: boolean;
@@ -99,6 +113,8 @@ export const DEFAULT_SETTINGS: Settings = {
   soundVolume: 0.12,
   autoCloseInterval: 15,
   absenceInterval: 180,
+  visibilityMode: "always",
+  userPinned: false,
   activeIntegrations: [
     "integration_resend", "integration_n8n", "integration_vercel", "integration_github",
   ],
@@ -110,9 +126,14 @@ export const DEFAULT_SETTINGS: Settings = {
 
 type Listener = () => void;
 
-class AppState {
-  mode: IslandMode = "hidden";
-  view: IslandViewName = "overview";
+export class AppState {
+  private currentMode: IslandMode = "hidden";
+  get mode() { return this.currentMode; }
+  set mode(mode: IslandMode) { if (this.currentMode !== mode) { this.currentMode = mode; this.navigationGeneration++; } }
+  private currentView: IslandViewName = "overview";
+  navigationGeneration = 0;
+  get view() { return this.currentView; }
+  set view(view: IslandViewName) { if (this.currentView !== view) { this.currentView = view; this.navigationGeneration++; } }
 
   tasks: AgentTask[] = [];
   focusId: string | null = null;
@@ -125,6 +146,8 @@ class AppState {
   mouseInIsland = { x: 0, y: 0 };
 
   isPinned = false;
+  /** Document preparation can retain the panel independently of drag animations. */
+  attachmentBusy = false;
   paused = false;
 
   uploadProgress = 0;
@@ -136,7 +159,10 @@ class AppState {
   noteMessage: string | null = null;
   searchResult: SearchResult | null = null;
   chatHistory: ChatMessage[] = [];
+  readonly agentChat = AgentChat;
   pendingApproval: ApprovalInfo | null = null;
+  readonly sessions = new SessionStore();
+  readonly selectedSessions: Partial<Record<AgentId, string>> = {};
 
   integrations: Record<string, IntegrationInfo> = {};
 
@@ -145,6 +171,10 @@ class AppState {
   settings: Settings = { ...DEFAULT_SETTINGS };
 
   private listeners = new Set<Listener>();
+
+  constructor() {
+    this.agentChat.subscribe(() => this.notify());
+  }
 
   subscribe(fn: Listener): () => void {
     this.listeners.add(fn);
@@ -161,6 +191,11 @@ class AppState {
   }
 
   get effectiveState(): BotStateName {
+    if (this.stateOverride == null && this.view === "prompt" && this.agentChat.provider !== "anthropic") {
+      const conversation = this.agentChat.current;
+      if (conversation?.approval) return "approval";
+      if (conversation?.runId) return "thinking";
+    }
     return this.stateOverride ?? this.focusTask?.state ?? "idle";
   }
 
@@ -172,8 +207,41 @@ class AppState {
     const t = this.tasks.find((x) => x.id === id);
     if (!t) return;
     this.focusId = id;
-    t.pillBadge = null;
+    const agent = agentForTask(id);
+    const selected = agent ? this.sessions.get(this.selectedSessions[agent] ?? "") : undefined;
+    if (selected && selected.state !== "approval" && selected.state !== "question") selected.pillBadge = null;
+    if (!agent) t.pillBadge = null;
+    this.syncAgentTasks();
     this.notify();
+  }
+
+  selectSession(agent: AgentId, key: string) {
+    if (this.sessions.get(key)?.agent !== agent) return;
+    this.selectedSessions[agent] = key;
+    this.syncAgentTasks();
+    this.notify();
+  }
+
+  /** Refresh each group's selected session, keeping unrelated service tasks intact. */
+  syncAgentTasks() {
+    for (const agent of AGENT_IDS) {
+      const group = this.tasks.find((t) => t.id === AGENT_META[agent].taskId);
+      if (!group) continue;
+      const sessions = this.sessions.list(agent);
+      const selected = this.sessions.get(this.selectedSessions[agent] ?? "") ?? sessions[0];
+      if (selected) this.selectedSessions[agent] = selected.key;
+      else delete this.selectedSessions[agent];
+      group.state = selected?.state ?? "idle";
+      group.steps = selected?.steps ?? [];
+      group.stepIndex = Math.max(0, group.steps.length - 1);
+      group.sessionCwd = selected?.cwd ?? null;
+      group.sessionId = selected?.sessionId ?? null;
+      group.sessionKey = selected?.key ?? null;
+      group.projectName = selected?.projectName ?? null;
+      group.pillBadge = sessions.some((s) => s.pillBadge === "approval") ? "approval"
+        : sessions.some((s) => s.pillBadge === "error") ? "error"
+        : sessions.some((s) => s.pillBadge === "finished") ? "finished" : null;
+    }
   }
 
   updateTask(id: string, state: BotStateName) {
@@ -199,11 +267,11 @@ class AppState {
     this.notify();
   }
 
-  /** loadIntegrationTasks() — VS Code always on, the rest opt-in (max 4). */
+  /** Four agent groups always present; the max-four limit applies to services. */
   loadIntegrationTasks() {
     for (const proto of INTEGRATION_AGENTS) {
       const shouldLoad =
-        proto.id === "integration_claude" || this.settings.activeIntegrations.includes(proto.id);
+        agentForTask(proto.id) != null || this.settings.activeIntegrations.includes(proto.id);
       const idx = this.tasks.findIndex((t) => t.id === proto.id);
       if (shouldLoad && idx < 0) this.tasks.push({ ...proto, steps: [] });
       if (!shouldLoad && idx >= 0) this.tasks.splice(idx, 1);
@@ -212,11 +280,12 @@ class AppState {
     const order = INTEGRATION_AGENTS.map((t) => t.id);
     this.tasks.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
     if (!this.focusId) this.focusId = "integration_claude";
+    this.syncAgentTasks();
     this.notify();
   }
 
   toggleIntegration(id: string) {
-    if (id === "integration_claude") return;
+    if (!TOGGLEABLE_INTEGRATION_IDS.includes(id)) return;
     const active = this.settings.activeIntegrations;
     if (active.includes(id)) {
       this.settings.activeIntegrations = active.filter((x) => x !== id);

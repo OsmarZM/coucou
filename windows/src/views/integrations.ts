@@ -1,3 +1,4 @@
+import { tr, formatText, LOCALE } from "../core/i18n";
 // Integration cards shown in the overview's left card — DOM ports of
 // IntegrationCardView and friends from IslandViewContent.swift.
 //
@@ -8,13 +9,14 @@ import { h, svg, clear, dot } from "./dom";
 import { ICONS } from "./icons";
 import { State, type AgentTask } from "../core/state";
 import { Bridge } from "../core/bridge";
+import { agentForTask } from "../core/sessions";
 
 /** Same shape as the Swift `timeAgo` computed properties. */
 export function timeAgo(value: unknown): string {
   const date = typeof value === "number" ? new Date(value) : new Date(String(value));
   const diff = (Date.now() - date.getTime()) / 1000;
   if (!Number.isFinite(diff)) return "";
-  if (diff < 60) return "just now";
+  if (diff < 60) return tr("just now");
   if (diff < 3600) return `${Math.floor(diff / 60)}m`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
   return `${Math.floor(diff / 86400)}d`;
@@ -57,19 +59,21 @@ function idleCard(task: AgentTask, openSettings: () => void): HTMLElement {
   const info = State.integrations[task.id];
   const configured = info?.configured ?? false;
   const error = info?.error ?? null;
-  // The Claude Code pill is about hooks, not a key — the macOS wording would be
-  // misleading here.
-  const missing = task.id === "integration_claude" ? "Hooks not installed" : "Key not configured";
-  const label = error ?? (configured ? "Connected · loading…" : missing);
-  const statusColor = error || !configured ? "#F4505E" : "#22C55E";
+  const agent = agentForTask(task.id);
+  const missing = agent ? tr("Hooks not installed") : tr("Key not configured");
+  const lastEvent = info?.data.lastEventAt;
+  const label = error ?? (agent
+    ? lastEvent ? formatText("template.eventReceived", { time: timeAgo(lastEvent) }) : configured ? tr("Hooks installed · awaiting events") : missing
+    : configured ? tr("Connected · loading…") : missing);
+  const statusColor = error || !configured ? "#F4505E" : agent ? "#F5A524" : "#22C55E";
 
   const actions = h("div", { class: "int-actions" });
-  if (task.id === "integration_claude") {
+  if (agent) {
     actions.append(
       h("button", {
         class: "link-btn",
         style: `color:${task.color}b3`,
-        text: "Open Visual Studio Code",
+        text: tr("Open Visual Studio Code"),
         onclick: () => void Bridge.openInVSCode(task.sessionCwd ?? null),
       }),
     );
@@ -78,7 +82,7 @@ function idleCard(task: AgentTask, openSettings: () => void): HTMLElement {
       h("button", {
         class: "link-btn",
         style: `color:${task.color}d9`,
-        text: "Open n8n",
+        text: tr("Open n8n"),
         onclick: () => void Bridge.openN8n(),
       }),
     );
@@ -87,30 +91,30 @@ function idleCard(task: AgentTask, openSettings: () => void): HTMLElement {
       h("button", {
         class: "link-btn",
         style: `color:${task.color}d9`,
-        text: `Open ${task.name}`,
+        text: formatText("template.openAgent", { agent: task.name }),
         onclick: () => void Bridge.openUrl(OPEN_URLS[task.id]),
       }),
     );
   }
-  if (configured) {
+  if (configured && !agent) {
     actions.append(
       h("button", {
         class: "link-btn",
         style: `color:${task.color}d9`,
-        text: "Refresh",
+        text: tr("Refresh"),
         onclick: () => void Bridge.refreshIntegration(task.id),
       }),
     );
   } else {
     actions.append(
-      h("button", { class: "link-btn", style: "color:#8e939c", text: "Settings…", onclick: openSettings }),
+      h("button", { class: "link-btn", style: "color:#8e939c", text: tr("Settings…"), onclick: openSettings }),
     );
   }
 
   return h(
     "div",
     { class: "int-card" },
-    header(task.color, task.id === "integration_claude" ? "VS Code" : task.name, "Integration"),
+    header(task.color, task.name, agent ? tr("Agent") : tr("Integration")),
     h("div", { class: "int-status" }, dot(statusColor, 5), h("span", { text: label })),
     actions,
   );
@@ -128,7 +132,7 @@ function vercelCard(onDetail: () => void): HTMLElement {
     if (i === 0) {
       const more = h(
         "button",
-        { class: "int-more", title: "Details", onclick: onDetail },
+        { class: "int-more", title: tr("Details"), onclick: onDetail },
         svg(ICONS.ellipsis, 8),
       );
       rows.append(listRow(accent, true, name, ago, more));
@@ -136,19 +140,19 @@ function vercelCard(onDetail: () => void): HTMLElement {
       rows.append(listRow(accent, false, name, ago));
     }
   });
-  return h("div", { class: "int-card" }, header("#7C5CFF", "Vercel", "Deployments"), rows);
+  return h("div", { class: "int-card" }, header("#7C5CFF", "Vercel", tr("Deployments")), rows);
 }
 
 function vercelDetail(onBack: () => void): HTMLElement {
   const d = arr("integration_vercel", "deployments")[0] ?? {};
   const success = d.state === "READY";
   const accent = success ? "#22C55E" : "#F4505E";
-  const status = success ? "Ready" : d.state === "CANCELED" ? "Canceled" : "Error";
+  const status = success ? tr("Ready") : d.state === "CANCELED" ? tr("Canceled") : tr("Error");
   const body = h("div", { class: "int-detail-body" });
   if (d.commitMessage) body.append(h("div", { class: "int-commit", text: String(d.commitMessage) }));
   const meta = h("div", { class: "int-meta" });
   if (d.branch) meta.append(h("span", { text: String(d.branch) }));
-  meta.append(h("span", { text: `${timeAgo(d.createdAt)} ago` }));
+  meta.append(h("span", { text: timeAgo(d.createdAt) }));
   body.append(meta);
   if (d.url) {
     body.append(
@@ -167,7 +171,7 @@ function vercelDetail(onBack: () => void): HTMLElement {
       { class: "int-detail-head" },
       h("button", { class: "int-back", onclick: onBack }, svg(ICONS.chevronLeft, 10, { stroke: 2.4 })),
       dot(accent, 6),
-      h("b", { text: String(d.projectName ?? "Deployment") }),
+      h("b", { text: String(d.projectName ?? tr("Deployment")) }),
       h("span", { class: "int-badge", style: `color:${accent};background:${accent}24`, text: status }),
     ),
     body,
@@ -196,7 +200,7 @@ function resendCard(): HTMLElement {
     if (i === 0 && e.subject) cells.push(h("span", { class: "int-sub", text: String(e.subject) }));
     rows.append(listRow(accent, i === 0, ...cells));
   });
-  return h("div", { class: "int-card" }, header("#22C55E", "Resend", "Emails", extra), rows);
+  return h("div", { class: "int-card" }, header("#22C55E", "Resend", tr("Emails"), extra), rows);
 }
 
 // ── GitHub ────────────────────────────────────────────────────────────────────
@@ -219,12 +223,12 @@ function githubCard(): HTMLElement {
   return h(
     "div",
     { class: "int-card" },
-    header("#F4505E", "GitHub", "Overview"),
+    header("#F4505E", "GitHub", tr("Overview")),
     h(
       "div",
       { class: "int-stats" },
-      statRow(ICONS.star, "#F5A524", "Total stars", fmt(stars)),
-      statRow(ICONS.stack, "#6B7079", "Repositories", String(repos)),
+      statRow(ICONS.star, "#F5A524", tr("Total stars"), fmt(stars)),
+      statRow(ICONS.stack, "#6B7079", tr("Repositories"), String(repos)),
     ),
   );
 }
@@ -244,7 +248,7 @@ function stripeCard(): HTMLElement {
         "div",
         { class: "int-row" },
         dot(accent, 5),
-        h("span", { class: "int-name", text: String(p.description ?? "Payment") }),
+        h("span", { class: "int-name", text: String(p.description ?? tr("Payment")) }),
         h("span", {
           class: "int-amount",
           style: "color:#22c55e",
@@ -257,7 +261,7 @@ function stripeCard(): HTMLElement {
   return h(
     "div",
     { class: "int-card" },
-    header("#0570DE", "Stripe", "Payments"),
+    header("#0570DE", "Stripe", tr("Payments")),
     h("div", { class: "int-balance" }, h("span", { text: balance }), h("i", { text: currency })),
     rows,
   );
@@ -280,12 +284,12 @@ function notionCard(): HTMLElement {
         p.emoji
           ? h("span", { class: "int-emoji", text: String(p.emoji) })
           : h("i", { class: "int-emoji" }, svg(ICONS.doc, 9)),
-        h("span", { class: "int-name", text: String(p.title ?? "Untitled") }),
+        h("span", { class: "int-name", text: String(p.title ?? tr("Untitled")) }),
         h("span", { class: "int-ago", text: timeAgo(p.lastEditedAt) }),
       ),
     );
   }
-  return h("div", { class: "int-card" }, header("#E8E8E8", "Notion", "Recent"), rows);
+  return h("div", { class: "int-card" }, header("#E8E8E8", "Notion", tr("Recent")), rows);
 }
 
 // ── Cal.com ───────────────────────────────────────────────────────────────────
@@ -296,23 +300,23 @@ function calcomCard(): HTMLElement {
     .sort((a, b) => new Date(String(a.start)).getTime() - new Date(String(b.start)).getTime());
   const rows = h("div", { class: "int-rows tight" });
   if (bookings.length === 0) {
-    rows.append(h("div", { class: "int-empty", text: "No calls scheduled" }));
+    rows.append(h("div", { class: "int-empty", text: tr("No calls scheduled") }));
   }
   for (const b of bookings.slice(0, 3)) {
     const when = new Date(String(b.start));
-    const day = when.toLocaleDateString(undefined, { day: "2-digit", month: "2-digit" });
-    const time = when.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+    const day = when.toLocaleDateString(LOCALE, { day: "2-digit", month: "2-digit" });
+    const time = when.toLocaleTimeString(LOCALE, { hour: "2-digit", minute: "2-digit" });
     rows.append(
       h(
         "div",
         { class: "int-row" },
         dot("#C9956A", 4),
         h("span", { class: "int-time", text: `${day} ${time}` }),
-        h("span", { class: "int-name", text: String(b.title ?? "Meeting") }),
+        h("span", { class: "int-name", text: String(b.title ?? tr("Meeting")) }),
       ),
     );
   }
-  return h("div", { class: "int-card" }, header("#C9956A", "Cal.com", "Schedule"), rows);
+  return h("div", { class: "int-card" }, header("#C9956A", "Cal.com", tr("Schedule")), rows);
 }
 
 // ── n8n ───────────────────────────────────────────────────────────────────────
@@ -325,7 +329,7 @@ function n8nCard(task: AgentTask, onDetail: () => void, openSettings: () => void
   return h(
     "div",
     { class: "int-card" },
-    header("#F29B38", "n8n", "Workflow"),
+    header("#F29B38", "n8n", tr("Workflow")),
     h(
       "div",
       { class: "int-actions" },
@@ -337,7 +341,7 @@ function n8nCard(task: AgentTask, onDetail: () => void, openSettings: () => void
           onclick: onDetail,
         },
         dot(accent, 5),
-        h("span", { class: "int-name", text: task.steps[0] ?? "Workflow" }),
+        h("span", { class: "int-name", text: task.steps[0] ?? tr("Workflow") }),
         svg(ICONS.ellipsis, 8),
       ),
     ),
@@ -356,18 +360,18 @@ function n8nDetail(task: AgentTask, onBack: () => void): HTMLElement {
       { class: "int-detail-head" },
       h("button", { class: "int-back", onclick: onBack }, svg(ICONS.chevronLeft, 10, { stroke: 2.4 })),
       dot(accent, 6),
-      h("b", { text: task.steps[0] ?? "Workflow" }),
+      h("b", { text: task.steps[0] ?? tr("Workflow") }),
       h("span", {
         class: "int-badge",
         style: `color:${accent};background:${accent}24`,
-        text: success ? "Success" : "Failed",
+        text: success ? tr("Success") : tr("Failed"),
       }),
     ),
     detail
       ? h("pre", { class: "int-detail-text", text: detail })
       : h("div", {
           class: "int-status",
-          text: success ? "Completed successfully." : "No error details available.",
+          text: success ? tr("Completed successfully.") : tr("No error details available."),
         }),
   );
 }
