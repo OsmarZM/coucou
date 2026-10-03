@@ -4,7 +4,7 @@
 
 Instalar o Coucou 0.1.2, preparar o login das CLIs e usar os personagens animados. O chat está habilitado para Codex CLI e Claude Code; Gemini CLI e GitHub Copilot CLI podem ser instalados e monitorados, mas o chat desses dois fornecedores fica indisponível nesta versão até a qualificação do isolamento de hooks e MCP. A conversa pessoal mantém histórico e anexos compartilhados entre os canais compatíveis. Não é necessário ativar aprendizado ou escolher uma pasta para começar.
 
-Esta versão foi preparada localmente no projeto `D:\coucou`. Um commit local não publica automaticamente um instalador ou atualiza o repositório remoto. Consulte a [validação](docs/VALIDACAO-AGENTE-PESSOAL-WINDOWS-2026-10-02.md) para os resultados reais e limites.
+O repositório desta implementação é [OsmarZM/coucou — branch codex/multiagent-windows](https://github.com/OsmarZM/coucou/tree/codex/multiagent-windows). Escolha livremente a pasta do projeto em seu computador; não é necessário ter uma unidade `D:`. Esta entrega disponibiliza o código e o guia pelo branch; o instalador deve ser gerado pelos comandos da seção 4. O workflow Windows mantém `PUBLISH=false`, com a publicação automática de instalador pausada. Consulte a [validação](docs/VALIDACAO-AGENTE-PESSOAL-WINDOWS-2026-10-02.md) para os resultados reais e limites.
 
 ## 1. Escolher a forma de instalar
 
@@ -49,6 +49,13 @@ rustup default stable-x86_64-pc-windows-msvc
 ## 3. Instalar e autenticar as CLIs
 
 Instale somente os fornecedores que pretende usar. O Coucou não cria contas nem copia seus tokens para o banco pessoal. Instalar uma CLI é diferente de autenticar e de qualificar um turno real. As instruções de Gemini e Copilot permitem preparar as CLIs para uso próprio e monitoramento; não habilitam o chat delas no Coucou 0.1.2.
+
+Antes dos comandos de instalação por npm, instale [Node.js 22 ou superior](https://nodejs.org/en/download), mesmo se você recebeu o instalador pronto do Coucou. Abra um novo PowerShell e confira:
+
+```powershell
+node --version
+npm --version
+```
 
 ### Codex CLI
 
@@ -129,26 +136,24 @@ O lançador npm (`codex.cmd`/`codex.ps1`) e um `codex.exe` incluído no aplicati
 
 ## 4. Compilar e gerar o instalador
 
-Use um checkout que contenha esta implementação, atualmente no branch local `codex/multiagent-windows`. Se recebeu o código em ZIP, extraia o repositório inteiro antes: o build usa também os sons da pasta `NotchBuddy`, fora de `windows`. Ajuste o caminho abaixo quando o projeto estiver em outra pasta.
-
-Confira a cópia de trabalho antes de compilar:
+Prepare os pré-requisitos de compilação da seção 2. Abra o PowerShell na pasta onde quer guardar o projeto e clone o branch completo. O exemplo cria uma subpasta `coucou` no local atual e depois entra em `windows`; funciona sem depender de um caminho ou unidade específicos:
 
 ```powershell
-Set-Location -LiteralPath 'D:\coucou'
-git branch --show-current
-git status --short
+git clone --branch codex/multiagent-windows --single-branch https://github.com/OsmarZM/coucou.git coucou
+Set-Location -LiteralPath '.\coucou\windows'
+npm ci
+npm run pack
 ```
 
-Para uma cópia em ZIP, os comandos Git são opcionais. Preserve alterações locais e prossiga com o build do Windows:
+Se já tem um checkout, confira o branch e preserve as alterações com `git branch --show-current` e `git status --short` antes de entrar na pasta `windows`. Para uma cópia em ZIP, baixe o branch indicado e extraia o repositório inteiro: o build usa também os 28 sons versionados em `NotchBuddy/Resources/sounds`, fora de `windows`.
+
+Para executar as verificações locais, use o PowerShell na mesma pasta `windows`:
 
 ```powershell
-Set-Location -LiteralPath 'D:\coucou\windows'
-npm ci
 npm test
 cargo test --workspace
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
-npm run pack
 ```
 
 `npm ci` usa o lockfile. O comando de empacotamento compila o hook, verifica TypeScript, gera o frontend, compila o backend e produz o instalador NSIS. O primeiro build baixa dependências e pode levar vários minutos.
@@ -156,16 +161,15 @@ npm run pack
 Arquivos produzidos:
 
 ```text
-D:\coucou\windows\release\Coucou-Windows-0.1.2-setup.exe
-D:\coucou\windows\release\Coucou-Windows-setup.exe
+.\release\Coucou-Windows-0.1.2-setup.exe
+.\release\Coucou-Windows-setup.exe
 ```
 
 O primeiro nome identifica a versão; o segundo aponta para o último pacote gerado localmente. `release/`, `target/` e `node_modules/` não são versionados. Gere o pacote quando usar o código em outro computador. Não use os executáveis antigos da raiz como substitutos do pacote novo.
 
-Para desenvolvimento nativo:
+Para desenvolvimento nativo, execute também na pasta `windows` do checkout:
 
 ```powershell
-Set-Location -LiteralPath 'D:\coucou\windows'
 npm run tauri dev
 ```
 
@@ -174,7 +178,7 @@ npm run tauri dev
 ## 5. Instalar e abrir o Coucou
 
 1. Termine as execuções ativas do Coucou e saia pelo ícone da bandeja antes de atualizar.
-2. Abra `windows\release\Coucou-Windows-0.1.2-setup.exe` por duplo clique.
+2. Abra `Coucou-Windows-0.1.2-setup.exe` por duplo clique. No checkout, ele fica em `windows\release`; após os comandos da seção 4, o caminho no terminal é `.\release\Coucou-Windows-0.1.2-setup.exe`.
 3. Siga o assistente de instalação para o usuário atual. O pacote inclui português brasileiro.
 4. Abra o Coucou pelo menu Iniciar/atalho criado pelo instalador.
 5. Abra **Configurações** e confira quais CLIs foram detectadas.
@@ -208,6 +212,8 @@ A opção existente **Anthropic API** continua separada: ela exige uma chave con
 
 O histórico e as memórias ficam em `%LOCALAPPDATA%\Coucou\personal\state.db`; as cópias dos documentos ficam em `%LOCALAPPDATA%\Coucou\documents`. Credenciais continuam sob responsabilidade das CLIs. A migração atualiza a política de contexto contínuo e preserva os registros existentes.
 
+O clone do GitHub leva o código, os testes e os recursos versionados. Histórico, memórias, anexos pessoais, configurações do perfil Windows, credenciais e sessões nativas das CLIs são dados locais e não vêm no clone. No outro computador, faça o login de cada CLI novamente e revise a instalação dos hooks pelo Coucou. Transferir dados pessoais existentes exige um backup separado; a migração entre computadores ainda não foi homologada.
+
 | Problema | Verificação |
 |---|---|
 | `cargo`/`node` não encontrado | Reabra o terminal e confira instalação/PATH |
@@ -222,10 +228,9 @@ Esquecer um registro no Coucou não apaga sessões/logs mantidos pelos fornecedo
 
 ## 8. Validar alterações futuras
 
-Os testes com CLI real são separados dos testes automáticos. O smoke pessoal usa duas mensagens reais no plano ChatGPT, em uma sessão criada pelo teste, com aprovação de filesystem simulada:
+Os testes com CLI real são separados dos testes automáticos. Execute os comandos desta seção na pasta `windows` do checkout. O smoke pessoal usa duas mensagens reais no plano ChatGPT, em uma sessão criada pelo teste, com aprovação de filesystem simulada:
 
 ```powershell
-Set-Location -LiteralPath 'D:\coucou\windows'
 $env:COUCOU_RUN_PERSONAL_SMOKE = '1'
 cargo test -p coucou --lib personal_tools_are_scoped_and_resume_without_a_native_environment -- --ignored --nocapture
 ```
