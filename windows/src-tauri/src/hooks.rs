@@ -2,10 +2,10 @@
 // Provider-specific JSON handling lives in installer; binary distribution and
 // the compact settings diff remain shared here.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
-use crate::settings;
+use crate::{platform, settings};
 
 mod installer;
 pub use installer::{
@@ -24,14 +24,17 @@ pub use installer::{
 pub fn ensure_hook_exe(app: &AppHandle) {
     let dest = settings::hook_exe_path();
     let Some(dir) = dest.parent() else { return };
-    if std::fs::create_dir_all(dir).is_err() {
+    // Nobody else may swap the relay Claude Code runs: its folder is ours only.
+    if platform::ensure_private_dir(&settings::local_dir()).is_err()
+        || std::fs::create_dir_all(dir).is_err()
+    {
         return;
     }
 
     let mut candidates: Vec<PathBuf> = Vec::new();
     if let Ok(p) = app
         .path()
-        .resolve("coucou-hook.exe", tauri::path::BaseDirectory::Resource)
+        .resolve(platform::HOOK_EXE, tauri::path::BaseDirectory::Resource)
     {
         candidates.push(p);
     }
@@ -39,23 +42,28 @@ pub fn ensure_hook_exe(app: &AppHandle) {
         if let Some(parent) = exe.parent() {
             // Installed build, then `tauri dev` (target/debug) next to the
             // release hook the pre-build step produces.
-            candidates.push(parent.join("coucou-hook.exe"));
-            candidates.push(parent.join("../release/coucou-hook.exe"));
+            candidates.push(parent.join(platform::HOOK_EXE));
+            candidates.push(parent.join("../release").join(platform::HOOK_EXE));
             // Belt and braces: where the old glob form used to land it.
-            candidates.push(parent.join("_up_/target/release/coucou-hook.exe"));
+            candidates.push(parent.join("_up_/target/release").join(platform::HOOK_EXE));
         }
     }
 
     let tried: Vec<String> = candidates.iter().map(|p| p.display().to_string()).collect();
     let Some(src) = candidates.into_iter().find(|p| p.exists()) else {
         crate::log::line(format!(
-            "coucou-hook.exe not found — Claude Code hooks cannot work. Looked in: {}",
+            "{} not found — Claude Code hooks cannot work. Looked in: {}",
+            platform::HOOK_EXE,
             tried.join(", ")
         ));
         return;
     };
+    install_relay(&src, &dest);
+}
 
-    let same = match (std::fs::metadata(&src), std::fs::metadata(&dest)) {
+#[cfg(windows)]
+fn install_relay(src: &Path, dest: &Path) {
+    let same = match (std::fs::metadata(src), std::fs::metadata(dest)) {
         (Ok(a), Ok(b)) => a.len() == b.len() && a.modified().ok() == b.modified().ok(),
         _ => false,
     };
@@ -64,10 +72,30 @@ pub fn ensure_hook_exe(app: &AppHandle) {
     }
     // A hook may be running right now and hold the file open; keeping the old
     // copy is fine, it is the same relay.
-    if let Err(err) = std::fs::copy(&src, &dest) {
+    if let Err(err) = std::fs::copy(src, dest) {
         if !dest.exists() {
-            crate::log::line(format!("could not install coucou-hook.exe: {err}"));
+            crate::log::line(format!("could not install {}: {err}", platform::HOOK_EXE));
         }
+    }
+}
+
+/// Linux does not keep the modification time on copy, so the contents decide.
+/// The new relay is written beside the old one and renamed over it: a hook
+/// starting at that moment runs either the old relay or the new one, never half
+/// of one, and a relay that is running right now does not block the update.
+#[cfg(unix)]
+fn install_relay(src: &Path, dest: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    if matches!((std::fs::read(src), std::fs::read(dest)), (Ok(a), Ok(b)) if a == b) {
+        return;
+    }
+    let temp = dest.with_extension(format!("new-{}", std::process::id()));
+    let result = std::fs::copy(src, &temp)
+        .and_then(|_| std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o755)))
+        .and_then(|_| std::fs::rename(&temp, dest));
+    if let Err(err) = result {
+        let _ = std::fs::remove_file(&temp);
+        crate::log::line(format!("could not install {}: {err}", platform::HOOK_EXE));
     }
 }
 

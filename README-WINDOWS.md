@@ -2,7 +2,7 @@
 
 ## Objetivo e escopo
 
-Instalar o Coucou 0.1.2, preparar o login das CLIs e usar os personagens animados. O chat está habilitado para Codex CLI e Claude Code; Gemini CLI e GitHub Copilot CLI podem ser instalados e monitorados, mas o chat desses dois fornecedores fica indisponível nesta versão até a qualificação do isolamento de hooks e MCP. A conversa pessoal mantém histórico e anexos compartilhados entre os canais compatíveis. Não é necessário ativar aprendizado ou escolher uma pasta para começar.
+Instalar o Coucou 0.1.3, preparar o login das CLIs e usar os personagens animados. O chat está habilitado para Codex CLI e Claude Code; Gemini CLI e GitHub Copilot CLI podem ser instalados e monitorados, mas o chat desses dois fornecedores fica indisponível nesta versão até a qualificação do isolamento de hooks e MCP. A conversa pessoal mantém histórico e anexos compartilhados entre os canais compatíveis. Não é necessário ativar aprendizado ou escolher uma pasta para começar.
 
 O repositório desta implementação é [OsmarZM/coucou — branch codex/multiagent-windows](https://github.com/OsmarZM/coucou/tree/codex/multiagent-windows). Escolha livremente a pasta do projeto em seu computador; não é necessário ter uma unidade `D:`. Esta entrega disponibiliza o código e o guia pelo branch; o instalador deve ser gerado pelos comandos da seção 4. O workflow Windows mantém `PUBLISH=false`, com a publicação automática de instalador pausada. Consulte a [validação](docs/VALIDACAO-AGENTE-PESSOAL-WINDOWS-2026-10-02.md) para os resultados reais e limites.
 
@@ -10,7 +10,7 @@ O repositório desta implementação é [OsmarZM/coucou — branch codex/multiag
 
 | Situação | Caminho |
 |---|---|
-| Você recebeu o instalador 0.1.2 | Instale as CLIs desejadas, seguindo a seção 3, e o aplicativo, na seção 5 |
+| Você recebeu o instalador 0.1.3 | Instale as CLIs desejadas, seguindo a seção 3, e o aplicativo, na seção 5 |
 | Você tem o código e quer gerar o instalador | Prepare o ambiente na seção 2 e execute a seção 4 |
 | Você quer desenvolver e testar a janela Tauri | Siga as seções 2 a 4 e use `npm run tauri dev` |
 
@@ -48,7 +48,7 @@ rustup default stable-x86_64-pc-windows-msvc
 
 ## 3. Instalar e autenticar as CLIs
 
-Instale somente os fornecedores que pretende usar. O Coucou não cria contas nem copia seus tokens para o banco pessoal. Instalar uma CLI é diferente de autenticar e de qualificar um turno real. As instruções de Gemini e Copilot permitem preparar as CLIs para uso próprio e monitoramento; não habilitam o chat delas no Coucou 0.1.2.
+Instale somente os fornecedores que pretende usar. O Coucou não cria contas nem copia seus tokens para o banco pessoal. Instalar uma CLI é diferente de autenticar e de qualificar um turno real. As instruções de Gemini e Copilot permitem preparar as CLIs para uso próprio e monitoramento; não habilitam o chat delas no Coucou 0.1.3.
 
 Antes dos comandos de instalação por npm, instale [Node.js 22 ou superior](https://nodejs.org/en/download), mesmo se você recebeu o instalador pronto do Coucou. Abra um novo PowerShell e confira:
 
@@ -156,16 +156,18 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-`npm ci` usa o lockfile. O comando de empacotamento compila o hook, verifica TypeScript, gera o frontend, compila o backend e produz o instalador NSIS. O primeiro build baixa dependências e pode levar vários minutos.
+`npm ci` usa o lockfile. O comando de empacotamento compila o hook, verifica TypeScript, gera o frontend, compila o backend e produz os instaladores NSIS e MSI. O primeiro build baixa dependências e pode levar vários minutos.
 
 Arquivos produzidos:
 
 ```text
-.\release\Coucou-Windows-0.1.2-setup.exe
+.\release\Coucou-Windows-0.1.3-setup.exe
 .\release\Coucou-Windows-setup.exe
+.\release\Coucou-Windows-0.1.3.msi
+.\release\Coucou-Windows.msi
 ```
 
-O primeiro nome identifica a versão; o segundo aponta para o último pacote gerado localmente. `release/`, `target/` e `node_modules/` não são versionados. Gere o pacote quando usar o código em outro computador. Não use os executáveis antigos da raiz como substitutos do pacote novo.
+Os nomes com `0.1.3` identificam a versão; os nomes sem versão apontam para o último pacote gerado localmente. Escolha um dos formatos de instalador. `release/`, `target/` e `node_modules/` não são versionados. Gere o pacote quando usar o código em outro computador. Não use os executáveis antigos da raiz como substitutos do pacote novo.
 
 Para desenvolvimento nativo, execute também na pasta `windows` do checkout:
 
@@ -177,8 +179,10 @@ npm run tauri dev
 
 ## 5. Instalar e abrir o Coucou
 
+Se a janela ainda mostra uma lista “Codex CLI”, “Choose folder” ou textos em inglês, confira qual executável abriu. Os executáveis antigos na raiz são preservados e não são atualizados por `git pull` ou pela compilação. Após gerar o pacote, instale a versão 0.1.3 ou execute `Iniciar-Coucou.ps1` na raiz do checkout. O lançador abre `windows\target\release\coucou.exe` e pede que você saia de outra cópia aberta; não encerra processos automaticamente. O rodapé do chat mostra a versão efetiva do aplicativo.
+
 1. Termine as execuções ativas do Coucou e saia pelo ícone da bandeja antes de atualizar.
-2. Abra `Coucou-Windows-0.1.2-setup.exe` por duplo clique. No checkout, ele fica em `windows\release`; após os comandos da seção 4, o caminho no terminal é `.\release\Coucou-Windows-0.1.2-setup.exe`.
+2. Abra `Coucou-Windows-0.1.3-setup.exe` por duplo clique. No checkout, ele fica em `windows\release`; após os comandos da seção 4, o caminho no terminal é `.\release\Coucou-Windows-0.1.3-setup.exe`.
 3. Siga o assistente de instalação para o usuário atual. O pacote inclui português brasileiro.
 4. Abra o Coucou pelo menu Iniciar/atalho criado pelo instalador.
 5. Abra **Configurações** e confira quais CLIs foram detectadas.
@@ -205,6 +209,10 @@ A ilha compacta permanece visível por padrão. A ocultação/fixação é uma e
 | GitHub Copilot CLI | Chat indisponível em todos os modos; monitoramento disponível | Isolamento de hooks/MCP ainda não qualificado | CLI ausente no PATH local; sem turno real homologado |
 
 O histórico pessoal e as memórias informam os turnos dentro de um orçamento de contexto; mensagens antigas podem ser recortadas ou omitidas. Isso não treina os pesos do modelo. A troca de personagem preserva o contexto compartilhado, mas as permissões continuam vinculadas ao fornecedor e canal. Não há troca automática de fornecedor após um erro.
+
+### O Hermes está integrado?
+
+O runtime do Hermes Agent da Nous Research não está incluído ou conectado nesta versão. O Coucou implementa memória local, histórico e procedimentos inspirados nele, em Rust/SQLite. Escolher um personagem seleciona um fornecedor; não inicia um coordenador Hermes, não cria subagentes nem repassa mensagens para outros chats. Integrar o runtime e sua delegação exige um adapter próprio e qualificação das permissões, memória, cancelamento e ferramentas. Veja o [registro de integração do oficial](docs/INTEGRACAO-OFICIAL-2026-10-06.md).
 
 A opção existente **Anthropic API** continua separada: ela exige uma chave configurada em **Configurações**, usa o Windows Credential Manager e pode gerar cobrança na conta de API. O login do Claude Code não substitui essa chave.
 

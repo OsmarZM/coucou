@@ -87,7 +87,7 @@ fn resolved_status(agent: &str, path: String) -> CliStatus {
         } else if agent == "claude" {
             "Chat pessoal sem ferramentas nativas; no modo projeto, somente leitura.".into()
         } else {
-            "Usa o login da CLI instalada. O modo projeto segue as permissões da sessão.".into()
+            "Conversa pessoal com contexto compartilhado. Acesso a arquivos exige permissão por operação.".into()
         },
     }
 }

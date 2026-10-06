@@ -15,7 +15,7 @@ const MAX_PAYLOAD: usize = 64 * 1024;
 const ACK_TIMEOUT: Duration = Duration::from_millis(800);
 
 pub fn pipe_name() -> String {
-    let key = crate::win_user::current_user_sid()
+    let key = crate::platform::current_user_sid()
         .unwrap_or_else(|| std::env::var("USERNAME").unwrap_or_else(|_| "user".into()));
     format!(r"\\.\pipe\coucou-{key}")
 }
@@ -27,7 +27,7 @@ fn create_pipe(name: &str, first: bool) -> std::io::Result<NamedPipeServer> {
         ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
     };
     use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
-    let sid = crate::win_user::current_user_sid()
+    let sid = crate::platform::current_user_sid()
         .ok_or_else(|| std::io::Error::other("Cannot determine pipe user"))?;
     let sddl: Vec<u16> = format!("D:P(A;;GA;;;{sid})")
         .encode_utf16()

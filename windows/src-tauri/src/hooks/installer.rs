@@ -1,6 +1,7 @@
 //! Provider-specific, reversible hook configuration. No CLI is run by this module.
 //! Preview and apply share one snapshot; apply refuses stale or malformed files.
 
+use crate::{platform, settings};
 use serde::Serialize;
 use serde_json::{json, Map, Value};
 use std::{
@@ -9,9 +10,6 @@ use std::{
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
-use windows::Win32::System::SystemInformation::GetLocalTime;
-
-use crate::settings;
 
 const MAX_CONFIG_BYTES: u64 = 4 * 1024 * 1024;
 const MARKER: &str = "--coucou-managed-v1";
@@ -118,9 +116,13 @@ pub struct HookPreview {
 }
 
 fn home() -> Result<PathBuf, String> {
-    std::env::var_os("USERPROFILE")
-        .map(PathBuf::from)
-        .ok_or_else(|| "USERPROFILE is unavailable; no configuration was changed.".into())
+    if std::env::var_os(platform::HOME_VAR).is_none() {
+        return Err(format!(
+            "{} is unavailable; no configuration was changed.",
+            platform::HOME_VAR
+        ));
+    }
+    Ok(platform::home_dir())
 }
 
 fn configuration_path(agent: Agent) -> Result<PathBuf, String> {
@@ -587,8 +589,8 @@ fn adjacent(path: &Path, suffix: &str) -> PathBuf {
 }
 
 fn backup_candidate(path: &Path, token: &str) -> PathBuf {
-    let time = unsafe { GetLocalTime() };
-    let date = format!("{:04}{:02}{:02}", time.wYear, time.wMonth, time.wDay);
+    let time = platform::local_time();
+    let date = format!("{:04}{:02}{:02}", time.year, time.month, time.day);
     for counter in 0..10000 {
         let path = adjacent(path, &format!(".coucou.bak-{date}-{token}-{counter}"));
         if !path.exists() {

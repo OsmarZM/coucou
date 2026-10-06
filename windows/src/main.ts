@@ -19,10 +19,12 @@ async function main() {
 
   const boot = await Bridge.boot();
   if (boot) {
+    State.appVersion = boot.version;
     State.settings = { ...State.settings, ...boot.settings };
   }
   island.applySettings();
   State.loadIntegrationTasks();
+  if (boot && !boot.cursorPoll) island.followPageCursor();
 
   await onEvent<{ x: number; y: number }>("cursor", ({ x, y }) => island.onCursor(x, y));
 

@@ -12,7 +12,7 @@ import { AGENT_META, type AgentId } from "../core/sessions";
 import { createMiniBot } from "../mochi/minibots";
 import type { ViewHost } from "./views";
 
-const PROVIDERS = [["codex", "Codex CLI"], ["claude", "Claude Code"], ["gemini", "Gemini CLI"], ["copilot", "GitHub Copilot CLI"], ["anthropic", "Anthropic API"]];
+const PROVIDERS = [["codex", "Codex"], ["claude", "Claude"], ["gemini", "Gemini"], ["copilot", "Copilot"], ["anthropic", "Anthropic API"]];
 const agentLabel = (agent: string) => PROVIDERS.find(([id]) => id === agent)?.[1] ?? agent;
 const projectName = (cwd: string) => cwd.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || tr("chat.personal");
 function bubble(role: "user" | "assistant", content: string, agent?: string, createdAt?: number, truncated = false) {
@@ -164,7 +164,7 @@ export function buildPrompt(onHeightChange: () => void, openLearned: () => void 
     for (const [agent, button] of characterButtons) { button.setAttribute("aria-pressed", String(AgentChat.provider === agent)); button.classList.toggle("on", AgentChat.provider === agent); button.disabled = apiSending; }
     conversations.disabled = apiSending || !cli; newButton.disabled = apiSending || !cli; newButton.hidden = !cli; refresh.hidden = !cli;
     advanced.hidden = !!conversation?.approval; chipRow.hidden = !!conversation?.approval; footer.hidden = !!conversation?.approval;
-    footer.textContent = tr(cli ? conversation?.contextId === PERSONAL_CONTEXT_ID ? "chat.continuousContext" : "chat.separateChannel" : "chat.apiStorage");
+    footer.textContent = `${State.appVersion ? `Coucou ${State.appVersion} · ` : ""}${tr(cli ? conversation?.contextId === PERSONAL_CONTEXT_ID ? "chat.continuousContext" : "chat.separateChannel" : "chat.apiStorage")}`;
     if (conversation && selectedForm !== conversation.id) { selectedForm = conversation.id; fillForm(conversation); }
     if (conversation && !formDirty && nativeSessionShown !== conversation.sessionId) { resume.value = conversation.sessionId ?? ""; nativeSessionShown = conversation.sessionId; }
     const nextDraftKey = !cli ? "api" : conversation?.contextId === PERSONAL_CONTEXT_ID ? PERSONAL_CONTEXT_ID : conversation?.id ?? `new:${AgentChat.provider}`;

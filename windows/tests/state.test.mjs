@@ -32,7 +32,7 @@ test("new sessions never steal selection and each selection shows its own state"
   state.selectSession("claude", sessionKey("claude", "second"));
   assert.equal(state.focusTask.sessionId, "second");
   assert.equal(state.focusTask.state, "error");
-  assert.equal(state.focusTask.name, "Claude Code");
+  assert.equal(state.focusTask.name, "Claude");
 });
 
 test("loading service preferences preserves selected agent sessions", () => {

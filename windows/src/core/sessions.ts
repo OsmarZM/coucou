@@ -4,9 +4,9 @@ import type { BotStateName } from "./layout";
 export const AGENT_IDS = ["claude", "codex", "gemini", "copilot"] as const;
 export type AgentId = typeof AGENT_IDS[number];
 export const AGENT_META = {
-  claude: { taskId: "integration_claude", name: "Claude Code", color: "#F5F6F8", source: "claudeCode" },
+  claude: { taskId: "integration_claude", name: "Claude", color: "#F5F6F8", source: "claudeCode" },
   codex: { taskId: "integration_codex", name: "Codex", color: "#10A37F", source: "codex" },
-  gemini: { taskId: "integration_gemini", name: "Gemini CLI", color: "#6C9AFF", source: "gemini" },
+  gemini: { taskId: "integration_gemini", name: "Gemini", color: "#6C9AFF", source: "gemini" },
   copilot: { taskId: "integration_copilot", name: "GitHub Copilot", color: "#B898FF", source: "copilot" },
 } as const;
 

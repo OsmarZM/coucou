@@ -19,8 +19,14 @@ const MAX_DECISION_BYTES: usize = 128;
 const FIRE_AND_FORGET_BUDGET: Duration = Duration::from_millis(1200);
 const DECISION_BUDGET: Duration = Duration::from_secs(110);
 
+#[cfg(target_os = "linux")]
+mod unix;
 #[cfg(windows)]
 mod win;
+#[cfg(target_os = "linux")]
+use unix::connect;
+#[cfg(any(windows, target_os = "linux"))]
+const CONNECT_TIMEOUT: Duration = Duration::from_millis(300);
 
 #[derive(Clone, Debug, PartialEq)]
 struct Invocation {
@@ -171,37 +177,9 @@ fn response_json(agent: Agent, decision: Option<&str>) -> Option<String> {
 }
 
 #[cfg(windows)]
-fn connect() -> Option<std::fs::File> {
-    use std::os::windows::io::AsRawHandle;
-    use std::time::Instant;
-    const ERROR_PIPE_BUSY: i32 = 231;
-    const CONNECT_TIMEOUT: Duration = Duration::from_millis(200);
-    // Fail closed if our SID is unavailable: a user-name pipe fallback could
-    // collide with another account and is unnecessary for supported Windows.
-    let sid = win::current_user_sid()?;
-    let path = format!(r"\\.\pipe\coucou-{sid}");
-    let deadline = Instant::now() + CONNECT_TIMEOUT;
-    loop {
-        match std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&path)
-        {
-            Ok(file) => {
-                let handle = windows::Win32::Foundation::HANDLE(file.as_raw_handle());
-                return win::pipe_server_is_same_user(handle).then_some(file);
-            }
-            Err(err) => {
-                if err.raw_os_error() != Some(ERROR_PIPE_BUSY) || Instant::now() >= deadline {
-                    return None;
-                }
-                std::thread::sleep(Duration::from_millis(15));
-            }
-        }
-    }
-}
+use win::connect;
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 fn connect() -> Option<std::fs::File> {
     None
 }

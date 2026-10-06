@@ -127,6 +127,7 @@ export const DEFAULT_SETTINGS: Settings = {
 type Listener = () => void;
 
 export class AppState {
+  appVersion = "";
   private currentMode: IslandMode = "hidden";
   get mode() { return this.currentMode; }
   set mode(mode: IslandMode) { if (this.currentMode !== mode) { this.currentMode = mode; this.navigationGeneration++; } }

@@ -19,19 +19,19 @@ Approve permissions, watch your session work, drop documents, chat through an in
 
 ---
 
-## Agente pessoal — versão local 0.1.2
+## Agente pessoal — versão local 0.1.3
 
 Para preparar o computador, instalar/autenticar as quatro CLIs, gerar o pacote e começar a usar, siga o [README de instalação passo a passo em português](../README-WINDOWS.md).
 
 O chat pessoal agora usa uma conversa contínua e escolha pelo personagem animado. Histórico, preferências e anexos são compartilhados no contexto pessoal; IDs de sessão e permissões de cada CLI permanecem separados. Não há botão para ativar aprendizado nem seletores principais de agente/conversa. Projeto e retomada manual ficam em controles avançados.
 
-O chat está habilitado para Codex e Claude. Gemini e Copilot podem ser instalados, autenticados e monitorados, mas o chat fica indisponível em todos os modos nesta 0.1.2 até a qualificação do isolamento de hooks e MCP. Selecionar um projeto não habilita esses envios.
+O chat está habilitado para Codex e Claude. Gemini e Copilot podem ser instalados, autenticados e monitorados, mas o chat fica indisponível em todos os modos nesta 0.1.3 até a qualificação do isolamento de hooks e MCP. Selecionar um projeto não habilita esses envios.
 
-Leia o [guia em português](../docs/AGENTE-PESSOAL-WINDOWS.md), a [validação desta versão](../docs/VALIDACAO-AGENTE-PESSOAL-WINDOWS-2026-10-02.md) e a [política de mensagens entre chats](../docs/CONTROLE-DE-MENSAGENS-ENTRE-CHATS.md). O pacote local versionado é distinto de instalação, publicação e homologação da janela nativa.
+Leia o [guia em português](../docs/AGENTE-PESSOAL-WINDOWS.md), a [integração e validação da 0.1.3](../docs/INTEGRACAO-OFICIAL-2026-10-06.md), a [validação anterior da 0.1.2](../docs/VALIDACAO-AGENTE-PESSOAL-WINDOWS-2026-10-02.md) e a [política de mensagens entre chats](../docs/CONTROLE-DE-MENSAGENS-ENTRE-CHATS.md). O pacote local versionado é distinto de instalação, publicação e homologação da janela nativa.
 
 ## Install
 
-This checkout generates a **local 0.1.2 installer** with `npm run pack`. Follow the
+This checkout generates a **local 0.1.3 installer** with `npm run pack`. Follow the
 [Portuguese installation guide](../README-WINDOWS.md) to install the CLIs, sign in,
 build the package and install for the current Windows user.
 
@@ -176,7 +176,7 @@ converse with native tools disabled. Project chat for enabled providers is under
 **Avançado**, defaults to read-only, and supported changes require explicit
 permission.
 
-Gemini CLI and GitHub Copilot CLI chat is unavailable in **all modes** in 0.1.2.
+Gemini CLI and GitHub Copilot CLI chat is unavailable in **all modes** in 0.1.3.
 The Gemini 0.62.0 source review found inherited hooks/MCP configuration that can
 remain active outside Coucou's approval flow. Copilot's hook/MCP isolation has
 not been qualified. Choosing a project folder does not enable either chat.
@@ -208,3 +208,38 @@ the earlier project/session implementation and its qualification history.
   attach it as context, and jumping to a specific terminal window — "Open
   terminal" opens the working folder in VS Code when `code` is on your `PATH`.
 - Cal.com shows the next bookings as a list rather than the Mac's calendar.
+
+## Linux
+
+The same app builds for Linux: everything that differs lives in
+`src-tauri/src/platform/`, and the relay's transport in `hook/src/unix.rs`.
+
+```bash
+sudo apt install build-essential pkg-config \
+  libwebkit2gtk-4.1-dev libgtk-layer-shell-dev libayatana-appindicator3-dev \
+  librsvg2-dev libssl-dev libdbus-1-dev patchelf \
+  gstreamer1.0-plugins-base gstreamer1.0-plugins-good
+npm install
+npm run tauri dev      # live-reloading development build
+npm run pack           # AppImage, .deb and .rpm in windows/release/
+```
+
+What changes on Linux:
+
+- **The island** is a gtk-layer-shell overlay anchored to the top edge, over any
+  top panel, on compositors that support it: COSMIC, KDE Plasma, Hyprland, Sway
+  and other wlroots compositors. GNOME has no layer-shell, so there the island
+  is a regular window. `COUCOU_LAYER_SHELL=0` forces that mode anywhere.
+- **Click-through** is the window's input region, kept equal to the island
+  shape, so the compositor sends every other click to what is underneath.
+- **Mochi's eyes** follow the pointer only while it is over the island: Wayland
+  gives no app the cursor position anywhere else.
+- **Claude Code hooks** go through `~/.local/share/coucou/bin/coucou-hook` and a
+  Unix socket at `$XDG_RUNTIME_DIR/coucou.sock`. Both ends check that the other
+  runs as the same user.
+- **Keys** live in the Secret Service (GNOME Keyring, KWallet).
+- **Files**: preferences in `~/.config/coucou/`, the log at
+  `~/.local/share/coucou/coucou.log`.
+- What the Windows build leaves out, this one does too: sending a file by
+  email, dragging Mochi onto a window, and jumping to a specific terminal
+  window — "Open terminal" opens the folder in VS Code.

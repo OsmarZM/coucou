@@ -1,4 +1,4 @@
-# Agente pessoal do Coucou — Windows 0.1.2
+# Agente pessoal do Coucou — Windows 0.1.3
 
 ## Objetivo
 
@@ -10,7 +10,7 @@ Abra o chat e escolha um personagem animado habilitado: Codex ou Claude. A troca
 
 O aplicativo mantém um ID próprio para cada canal e os IDs de sessão de cada fornecedor. Isso permite retomar uma sessão local sem misturar as execuções. O histórico enviado em um novo turno tem orçamento limitado; partes antigas ou extensas podem ser recortadas ou omitidas, com indicação de recorte. Não há promessa de enviar todo o histórico ao modelo em cada mensagem.
 
-Codex suporta as ferramentas pessoais mediadas pelo Coucou. Claude pode conversar no modo pessoal com ferramentas nativas desativadas. O chat Gemini e Copilot está indisponível em todos os modos nesta 0.1.2 até a qualificação do isolamento de hooks e MCP; escolher uma pasta de projeto não habilita o envio.
+Codex suporta as ferramentas pessoais mediadas pelo Coucou. Claude pode conversar no modo pessoal com ferramentas nativas desativadas. O chat Gemini e Copilot está indisponível em todos os modos nesta 0.1.3 até a qualificação do isolamento de hooks e MCP; escolher uma pasta de projeto não habilita o envio.
 
 A análise do Gemini 0.62.0 confirmou que hooks globais/de projeto e servidores MCP herdados podem continuar ativos mesmo em modo de planejamento, executando comandos fora das confirmações do Coucou. O Copilot não estava instalado no ambiente de validação e esse isolamento ainda não foi qualificado. As CLIs podem ser instaladas, autenticadas e monitoradas; o fluxo manual de instalação dos hooks do Coucou continua separado, com prévia e revisão. Os adaptadores de chat são preservados para qualificação futura. Veja as referências oficiais de [hooks do Gemini](https://geminicli.com/docs/hooks/) e [hooks do Copilot](https://docs.github.com/en/copilot/reference/hooks-reference).
 
