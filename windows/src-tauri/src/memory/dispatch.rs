@@ -21,7 +21,7 @@ impl MemoryService {
     ) -> Result<(), String> {
         validate_id(conversation)?;
         validate_id(session)?;
-        if !["codex", "claude", "gemini", "copilot"].contains(&agent) {
+        if !["codex", "claude", "gemini", "copilot", "hermes"].contains(&agent) {
             return Err("Agente inválido.".into());
         }
         let connection = self.lock()?;

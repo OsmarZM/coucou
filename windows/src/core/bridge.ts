@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { Settings } from "./state";
+import type { RuntimeToolSpec } from "./agent-runtime";
 import type { Attachment, DocumentChunk, PreparedDocuments } from "./document-types";
 import type { MemoryPreferences, MemoryQuery, MemoryCandidate, MemoryRecord, SkillCandidate, SkillRecord, SkillDiff, SkillExport, SessionRecord, StoredMessage, SessionSearchHit } from "./personal-types";
 
@@ -95,7 +96,17 @@ export const Bridge = {
   chatSend: (query: string, context: ChatContext | null) =>
     callOrThrow<{ text: string }>("chat_send", { query, context }),
   chatReset: () => call<void>("chat_reset"),
+  agentRuntimeTools: () => callOrThrow<RuntimeToolSpec[]>("agent_runtime_tools"),
   agentChatStatus: () => callOrThrow<AgentChatStatus[]>("agent_chat_status"),
+  managedServiceStatus: () => callOrThrow<ManagedModelStatus>("managed_service_status"),
+  managedServiceConfigure: (settings: ManagedModelSettings) => callOrThrow<ManagedModelStatus>("managed_service_configure", { settings }),
+  managedServiceSetProviderKey: (platform: string, value: string) => callOrThrow<ManagedModelStatus>("managed_service_set_provider_key", { platform, value }),
+  managedServiceProvision: () => callOrThrow<ManagedModelStatus>("managed_service_provision"),
+  managedServiceStart: () => callOrThrow<ManagedModelStatus>("managed_service_start"),
+  managedServiceStop: () => callOrThrow<ManagedModelStatus>("managed_service_stop"),
+  hermesStatus: () => callOrThrow<HermesRuntimeStatus>("hermes_status"),
+  hermesProvision: () => callOrThrow<HermesRuntimeStatus>("hermes_provision"),
+  hermesConfigure: (settings: HermesRuntimeSettings) => callOrThrow<HermesRuntimeStatus>("hermes_configure", { settings }),
   agentChatStart: (request: AgentChatStart) => callOrThrow<void>("agent_chat_start", { request }),
   agentChatCancel: (conversationId: string, runId: string) =>
     callOrThrow<boolean>("agent_chat_cancel", { conversationId, runId }),
@@ -126,7 +137,8 @@ export const Bridge = {
   historyForget: (conversationId: string) => callOrThrow<number>("history_forget", { conversationId }),
   permissionsRevoke: (conversationId: string) => callOrThrow<void>("permissions_revoke", { conversationId }),
   documentsChoose: () => callOrThrow<string[]>("documents_choose"),
-  documentsIngest: (conversationId: string, paths: string[]) => callOrThrow<Attachment[]>("documents_ingest", { conversationId, paths }),
+  documentsIngest: (conversationId: string, paths: string[], operationId?: string) => callOrThrow<Attachment[]>("documents_ingest", { conversationId, paths, operationId: operationId ?? null }),
+  documentsCancel: (operationId: string) => callOrThrow<boolean>("documents_cancel", { operationId }),
   documentsList: (conversationId: string) => callOrThrow<Attachment[]>("documents_list", { conversationId }),
   documentsRemove: (conversationId: string, id: string) => callOrThrow<void>("documents_remove", { conversationId, id }),
   documentsPrepare: (conversationId: string, attachmentIds: string[], budgetChars: number) => callOrThrow<PreparedDocuments>("documents_prepare", { conversationId, attachmentIds, budgetChars }),
@@ -154,7 +166,22 @@ export interface IntegrationUpdate {
   event: { success: boolean; label: string; detail: string | null } | null;
 }
 
-export type ChatAgent = "codex" | "claude" | "gemini" | "copilot";
+export type ChatAgent = "codex" | "claude" | "gemini" | "copilot" | "hermes";
+export interface ManagedModelSettings {
+  setupDecision: "pending" | "declined" | "accepted"; enabled: boolean; agentName: string; autostart: boolean;
+  approvedProviders: string[]; model: { platform: string; modelId: string } | null;
+}
+export interface ManagedModelStatus {
+  settings: ManagedModelSettings; runtimeInstalled: boolean; running: boolean; managedByOtherInstance: boolean;
+  port: number | null; processId: number | null; availableProviders: string[]; revision: string; nodeVersion: string; lastError: string | null;
+}
+export interface HermesRuntimeSettings {
+  enabled: boolean; pythonExecutable: string; sourceDirectory: string; useFreeModels: boolean; baseUrl: string; model: string;
+  contextWindowTokens: number;
+}
+export interface HermesRuntimeStatus {
+  settings: HermesRuntimeSettings; runtimeInstalled: boolean; modelConfigured: boolean; available: boolean; detail: string; revision: string;
+}
 export interface AgentChatStatus {
   agent: ChatAgent;
   available: boolean;

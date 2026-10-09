@@ -695,7 +695,7 @@ checksum = "7f8f80099a98041a3d1622845c271458a2d73e688351bf3cb999266764b81d48"
 
 [[package]]
 name = "coucou"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "coucou-agent-protocol",
  "gtk",
@@ -719,7 +719,7 @@ dependencies = [
 
 [[package]]
 name = "coucou-agent-protocol"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -727,7 +727,7 @@ dependencies = [
 
 [[package]]
 name = "coucou-hook"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "coucou-agent-protocol",
  "libc",

@@ -7,7 +7,9 @@ import { State, type Settings } from "./core/state";
 import { Island } from "./island/island";
 import { registerHookHandlers, cancelPendingApproval } from "./island/hooks";
 import { registerIntegrationHandlers, refreshConfigured } from "./island/integrations";
-import { registerAgentChatHandlers, cancelAgentChatTurns, disposeAgentChatHandlers } from "./core/agent-chat";
+import { AgentChat, registerAgentChatHandlers, cancelAgentChatTurns, disposeAgentChatHandlers, setHermesDisplayName, refreshAgentChatStatus } from "./core/agent-chat";
+import { chatAgentForTask } from "./core/sessions";
+import type { ManagedModelStatus } from "./core/bridge";
 
 async function main() {
   const root = document.getElementById("root");
@@ -24,6 +26,9 @@ async function main() {
   }
   island.applySettings();
   State.loadIntegrationTasks();
+  const applyPersonalAgent=(status:ManagedModelStatus)=>{setHermesDisplayName(status.settings.agentName);const task=State.tasks.find(task=>task.id==="hermes");if(task)task.name=status.settings.agentName;State.notify();};
+  if(IS_TAURI)void Bridge.managedServiceStatus().then(applyPersonalAgent).catch(()=>{});
+  await onEvent<ManagedModelStatus>("managed-models-changed",status=>{applyPersonalAgent(status);void refreshAgentChatStatus();});
   if (boot && !boot.cursorPoll) island.followPageCursor();
 
   await onEvent<{ x: number; y: number }>("cursor", ({ x, y }) => island.onCursor(x, y));
@@ -71,6 +76,10 @@ async function main() {
   registerHookHandlers(island);
   registerIntegrationHandlers(island);
   await registerAgentChatHandlers(island);
+  // Align the opening overview with the restored character once. Incoming
+  // activity does not change the user's later selection.
+  const restoredTask = State.tasks.find(task => chatAgentForTask(task.id) === AgentChat.provider);
+  if (restoredTask) State.setFocus(restoredTask.id);
   window.addEventListener("beforeunload", () => {
     cancelAgentChatTurns();
     disposeAgentChatHandlers();

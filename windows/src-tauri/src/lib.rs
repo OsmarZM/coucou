@@ -1,16 +1,21 @@
 // Coucou for Windows — app wiring and the commands the island calls.
 
 mod agent_chat;
+mod agent_runtime;
 mod approvals;
 mod capabilities;
 mod claude;
 pub mod documents;
 mod file_dialog;
 mod files;
+mod hermes;
+pub mod hermes_bridge;
 mod hooks;
 mod integrations;
 mod island;
 mod log;
+mod managed_commands;
+pub mod managed_services;
 mod memory;
 mod personal_commands;
 mod personal_runtime;
@@ -19,6 +24,7 @@ mod platform;
 mod privacy;
 mod secrets;
 mod settings;
+mod supervisor;
 mod tray;
 mod usage;
 
@@ -193,6 +199,7 @@ fn open_in_vscode(path: Option<String>) -> bool {
 
 #[tauri::command]
 fn quit_app(app: AppHandle) {
+    app.state::<documents::ImportOperations>().cancel_all();
     app.state::<agent_chat::AgentChat>().cancel_all();
     pipe::cancel_all(&app);
     app.exit(0);
@@ -202,6 +209,9 @@ fn quit_app(app: AppHandle) {
 /// not just the island stopping showing things.
 #[tauri::command]
 fn set_paused(app: AppHandle, shared: State<Shared>, paused: bool) {
+    if paused {
+        app.state::<documents::ImportOperations>().cancel_all();
+    }
     shared.paused.store(paused, Ordering::Relaxed);
     if paused {
         pipe::cancel_all(&app);
@@ -338,9 +348,21 @@ fn chat_reset(chat: State<Chat>) {
     chat.reset();
 }
 
+/// Metadata only. Execution stays behind the active Codex turn and approval broker.
 #[tauri::command]
-fn agent_chat_status() -> Vec<agent_chat::CliStatus> {
-    agent_chat::status()
+fn agent_runtime_tools() -> serde_json::Value {
+    agent_runtime::specs()
+}
+
+#[tauri::command]
+async fn agent_chat_status(
+    supervisor: State<'_, supervisor::Supervisor>,
+    services: State<'_, managed_services::ManagedServices>,
+) -> Result<Vec<agent_chat::CliStatus>, String> {
+    let mut statuses = agent_chat::status();
+    let status = supervisor.status(&services).await?;
+    statuses.push(agent_chat::hermes_status(status.available, status.detail));
+    Ok(statuses)
 }
 
 #[tauri::command]
@@ -518,6 +540,13 @@ pub fn run() {
         .manage(Pending::default())
         .manage(Chat::default())
         .manage(agent_chat::AgentChat::default())
+        .manage(documents::ImportOperations::default())
+        .manage(managed_services::ManagedServices::new(
+            settings::local_dir().join("managed-services/free-models"),
+        ))
+        .manage(supervisor::Supervisor::new(
+            settings::local_dir().join("managed-services/hermes"),
+        ))
         .manage(PersonalStore {
             memory: memory::MemoryService::open(
                 settings::local_dir().join("personal").join("state.db"),
@@ -550,7 +579,17 @@ pub fn run() {
             log_line,
             chat_send,
             chat_reset,
+            agent_runtime_tools,
             agent_chat_status,
+            managed_commands::managed_service_status,
+            managed_commands::managed_service_configure,
+            managed_commands::managed_service_set_provider_key,
+            managed_commands::managed_service_provision,
+            managed_commands::managed_service_start,
+            managed_commands::managed_service_stop,
+            managed_commands::hermes_status,
+            managed_commands::hermes_provision,
+            managed_commands::hermes_configure,
             agent_chat_start,
             agent_chat_cancel,
             agent_chat_decide,
@@ -579,6 +618,7 @@ pub fn run() {
             personal_commands::history_forget,
             personal_commands::permissions_revoke,
             personal_commands::documents_ingest,
+            personal_commands::documents_cancel,
             personal_commands::documents_choose,
             personal_commands::documents_list,
             personal_commands::documents_remove,
@@ -620,6 +660,13 @@ pub fn run() {
             hooks::ensure_hook_exe(&handle);
             pipe::start(handle.clone());
             integrations::start(handle.clone());
+            let service_app = handle.clone();
+            tauri::async_runtime::spawn(async move {
+                let services = service_app.state::<managed_services::ManagedServices>();
+                if services.status().await.settings.enabled {
+                    let _ = services.start().await;
+                }
+            });
             Ok(())
         })
         .run(tauri::generate_context!())

@@ -11,6 +11,19 @@ const external = (changes = {}) => ({ agent: "codex", sessionId: "external-a", s
 const activity = (changes = {}) => ({ provider: "codex", sessionId: "native-a", runId: "run-a", kind: "tool", id: "tool-a", status: "running", source: "item/started", capturedAt: NOW, quality: "observed", ...changes });
 const metrics = (conversations = [], sessions = [], now = NOW) => aggregateAgentMetrics(conversations, sessions, now).codex;
 
+test("Hermes delegates retain provider usage and process ownership without becoming duplicate sessions", () => {
+  const parent=conversation({agent:"hermes",sessionId:"hermes-session",usage:null,processCount:3,workers:{
+    child:{id:"child",agent:"codex",runId:"run-a",status:"running",processCount:2,usage:usage(80,{sessionId:"worker-native"}),activities:{}},
+  }});
+  const values=aggregateAgentMetrics([parent],[external({sessionId:"worker-native"})],NOW);
+  assert.equal(values.hermes.activeTotal,1);assert.equal(values.hermes.processes.total,3);
+  assert.equal(values.codex.managedActive,1);assert.equal(values.codex.externalActive,0);
+  assert.equal(values.codex.processes.total,2);assert.equal(values.codex.tokens.total,80);
+  parent.runId=null;parent.status="completed";parent.workers.child.status="completed";parent.workers.child.processCount=0;
+  const idle=aggregateAgentMetrics([parent],[],NOW);
+  assert.equal(idle.codex.activeTotal,0);assert.equal(idle.codex.tokens.total,80);
+});
+
 test("native sessions and stale managed hooks are deduplicated across active and inactive conversations", () => {
   const result = metrics([conversation(), conversation({ id: "c-alias", runId: null, status: "completed", processCount: 0 })], [external({ sessionId: "native-a" }), external({ sessionId: "other" }), external({ sessionId: "other" })]);
   assert.equal(result.managedActive, 1);

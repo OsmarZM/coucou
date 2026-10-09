@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { AttachmentStore } from "../src/core/attachments.ts";
+import { AttachmentStore, attachmentStatusLabel } from "../src/core/attachments.ts";
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const item = (conversationId, id, status = "queued") => ({ id, conversationId, name: `${id}.txt`, kind: "text", size: 10, sha256: "hash", createdAt: 1, status, message: null, coverage: null });
 
@@ -80,4 +80,87 @@ test("file limit rejection occurs before an oversized import reaches IPC", async
   await assert.rejects(store.ingest("conversation", Array(11).fill("path")));
   assert.equal(calls, 0);
   assert.equal(store.get("conversation").busy, 0);
+});
+
+test("import progress remains pending until IPC confirms local attachment, with an owned operation ID", async () => {
+  const pending = deferred(); let operationId;
+  const store = new AttachmentStore({ documentsList: async () => [], documentsIngest: (id, paths, operation) => { operationId = operation; return pending.promise; }, documentsRemove: async () => {} });
+  const importing = store.ingest("conversation", ["D:\\file.txt"]);
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(store.lastImport.status, "importing"); assert.equal(store.get("conversation").busy, 1);
+  assert.equal(operationId, store.lastImport.id); assert.match(operationId, /^[a-f0-9-]{36}$/);
+  assert.deepEqual(store.selectedIds("conversation"), []);
+  pending.resolve([item("conversation", "new")]); await importing;
+  assert.equal(store.lastImport.status, "completed"); assert.deepEqual(store.lastImport.attachmentIds, ["new"]);
+  assert.equal(store.get("conversation").busy, 0); assert.equal(store.get("conversation").items[0].status, "queued");
+});
+
+test("cancelling waits for the ingestion result and is scoped to its exact operation", async () => {
+  const pending = deferred(); const cancelled = [];
+  const store = new AttachmentStore({ documentsList: async () => [], documentsIngest: () => pending.promise, documentsCancel: async (id) => { cancelled.push(id); return true; }, documentsRemove: async () => {} });
+  const importing = store.ingest("first", ["D:\\file.txt"]); const rejection = assert.rejects(importing, /cancelada/);
+  await Promise.resolve(); await Promise.resolve();
+  store.get("second");
+  assert.equal(await store.cancelImport("second"), false);
+  assert.equal(await store.cancelImport("first"), true);
+  assert.equal(await store.cancelImport("first"), false);
+  assert.deepEqual(cancelled, [store.lastImport.id]);
+  assert.equal(store.get("first").busy, 1); assert.equal(store.lastImport.status, "cancelling");
+  pending.reject(new Error("Importação cancelada pelo usuário.")); await rejection;
+  assert.equal(store.get("first").busy, 0); assert.equal(store.lastImport.status, "cancelled");
+  assert.deepEqual(store.get("second").items, []); assert.match(store.get("first").error, /cancelada/);
+});
+
+test("an unconfirmed cancellation retains busy state and reports its uncertainty", async () => {
+  const pending = deferred();
+  const store = new AttachmentStore({ documentsList: async () => [], documentsIngest: () => pending.promise, documentsCancel: async () => false, documentsRemove: async () => {} });
+  const importing = store.ingest("conversation", ["D:\\file.txt"]);
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(await store.cancelImport("conversation"), false); assert.equal(store.get("conversation").busy, 1);
+  assert.equal(store.lastImport.status, "importing"); assert.match(store.get("conversation").error, /confirmar o cancelamento/);
+  pending.resolve([item("conversation", "done")]); await importing;
+  assert.equal(store.lastImport.status, "completed"); assert.equal(store.get("conversation").busy, 0);
+});
+
+test("import failures remain visible after refreshing documents and preserve previous attachments", async () => {
+  const prior = item("conversation", "previous");
+  const store = new AttachmentStore({ documentsList: async () => [prior], documentsIngest: async () => { throw new Error("Arquivo OneDrive indisponível para cópia local."); }, documentsRemove: async () => {} });
+  await store.refresh("conversation"); store.toggle("conversation", "previous", true);
+  await assert.rejects(store.ingest("conversation", ["D:\\offline.txt"]), /OneDrive/);
+  await store.refresh("conversation");
+  assert.match(store.get("conversation").error, /OneDrive/); assert.equal(store.lastImport.status, "failed");
+  assert.deepEqual(store.selectedIds("conversation"), ["previous"]); assert.equal(store.get("conversation").busy, 0);
+});
+
+test("empty or foreign import results never claim success or select a foreign document", async () => {
+  for (const response of [[], [item("foreign", "secret")]]) {
+    const store = new AttachmentStore({ documentsList: async () => [], documentsIngest: async () => response, documentsRemove: async () => {} });
+    await assert.rejects(store.ingest("conversation", ["D:\\file.txt"]), /não confirmou/);
+    assert.equal(store.lastImport.status, "failed"); assert.equal(store.get("conversation").busy, 0);
+    assert.deepEqual(store.get("conversation").items, []); assert.deepEqual(store.selectedIds("foreign"), []);
+  }
+});
+
+test("a simultaneous duplicate import is refused before a second IPC call", async () => {
+  const pending = deferred(); let calls = 0;
+  const store = new AttachmentStore({ documentsList: async () => [], documentsIngest: () => { calls++; return pending.promise; }, documentsRemove: async () => {} });
+  const first = store.ingest("conversation", ["D:\\file.txt"]);
+  await assert.rejects(store.ingest("conversation", ["D:\\file.txt"]), /Já existe/);
+  await Promise.resolve(); await Promise.resolve(); assert.equal(calls, 1);
+  pending.resolve([item("conversation", "once")]); await first;
+  assert.equal(store.get("conversation").items.length, 1);
+});
+
+test("summary intent follows the captured context and is consumed only once without starting a model", () => {
+  let calls = 0;
+  const store = new AttachmentStore({ documentsList: async () => { calls++; return []; }, documentsIngest: async () => { calls++; return []; }, documentsRemove: async () => { calls++; } }, () => {}, () => {}, (id) => ["codex", "hermes"].includes(id) ? "personal-main" : id);
+  store.requestSummary("codex");
+  assert.equal(store.takeSummaryRequest("project"), false); assert.equal(store.takeSummaryRequest("hermes"), true);
+  assert.equal(store.takeSummaryRequest("codex"), false); assert.equal(calls, 0);
+});
+
+test("attachment labels distinguish local copy, partial extraction and unsupported vision", () => {
+  assert.match(attachmentStatusLabel(item("c", "file")), /leitura pendente/);
+  assert.equal(attachmentStatusLabel({ ...item("c", "file", "ready"), coverage: { truncated: true } }), "Leitura parcial");
+  assert.equal(attachmentStatusLabel({ ...item("c", "file", "unsupported"), kind: "image" }), "Imagem anexada · visão/OCR indisponível");
 });

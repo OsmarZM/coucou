@@ -33,6 +33,7 @@ pub struct ProcessIo {
     user_message: String,
     documents: Option<crate::documents::DocumentService>,
     attachment_ids: Vec<String>,
+    local_runtime_enabled: bool,
 }
 impl ProcessIo {
     pub fn spawn(
@@ -43,7 +44,19 @@ impl ProcessIo {
         control: Arc<Control>,
         sink: Sink,
     ) -> Result<Self, String> {
-        let (mut child, job) = super::process::spawn(executable, args, &ctx.cwd)?;
+        Self::spawn_with_environment(executable, args, ctx, cancel, control, sink, None)
+    }
+    pub(crate) fn spawn_with_environment(
+        executable: &Executable,
+        args: &[String],
+        ctx: &RunContext,
+        cancel: watch::Receiver<bool>,
+        control: Arc<Control>,
+        sink: Sink,
+        environment: Option<&std::collections::BTreeMap<String, String>>,
+    ) -> Result<Self, String> {
+        let (mut child, job) =
+            super::process::spawn_with_environment(executable, args, &ctx.cwd, environment)?;
         let stdin = child.stdin.take().ok_or("CLI stdin unavailable.")?;
         let stdout = BufReader::new(child.stdout.take().ok_or("CLI stdout unavailable.")?);
         let mut stderr = child.stderr.take().ok_or("CLI stderr unavailable.")?;
@@ -69,6 +82,7 @@ impl ProcessIo {
             user_message: ctx.query.clone(),
             documents: None,
             attachment_ids: Vec::new(),
+            local_runtime_enabled: true,
         };
         value.emit("activity",json!({"kind":"process","processCount":value.job.process_count(),"capturedAt":crate::usage::now_seconds(),"source":"Windows JobObject.ActiveProcesses"}));
         Ok(value)
@@ -81,6 +95,12 @@ impl ProcessIo {
     }
     pub fn context(&self) -> &RunContext {
         &self.ctx
+    }
+    pub fn local_runtime_enabled(&self) -> bool {
+        self.local_runtime_enabled
+    }
+    pub fn disable_local_runtime(&mut self) {
+        self.local_runtime_enabled = false;
     }
     pub fn cancel_receiver(&self) -> watch::Receiver<bool> {
         self.cancel.clone()

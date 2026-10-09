@@ -1,11 +1,13 @@
 // Pure aggregation over observed records. A CLI process, a tool call and a
 // native subagent have different identities and must not become extra sessions.
-import { AGENT_IDS, type AgentId, type AgentSession } from "./sessions";
+import { AGENT_IDS, type AgentSession } from "./sessions";
+import type { ChatAgent } from "./bridge";
+const CHAT_PROFILES: ChatAgent[] = [...AGENT_IDS, "hermes"];
 import type { AgentConversation } from "./agent-chat";
 import type { AgentActivity, AgentUsage, RateWindow, TokenUsage } from "./personal-types";
 
 export const EXTERNAL_FRESH_SECONDS = 180;
-type Conversation = Pick<AgentConversation, "id" | "agent" | "sessionId" | "runId" | "status" | "approval" | "updatedAt" | "usage" | "activities" | "processCount">;
+type Conversation = Pick<AgentConversation, "id" | "agent" | "sessionId" | "runId" | "status" | "approval" | "updatedAt" | "usage" | "activities" | "processCount"> & Partial<Pick<AgentConversation,"workers">>;
 type External = Pick<AgentSession, "agent" | "sessionId" | "state" | "lastSeen" | "ended">;
 export interface CountMetric {
   observedCount: number;
@@ -40,7 +42,7 @@ export type ProviderQuota = AgentUsage["quota"] & {
   historical: boolean;
 };
 export interface AgentMetrics {
-  provider: AgentId;
+  provider: ChatAgent;
   managedActive: number;
   externalActive: number;
   externalUnknown: number;
@@ -119,11 +121,12 @@ function tokensFor(groups: Conversation[][], externalActive: number, externalUnk
  * No hook/session is counted twice when its native ID belongs to any managed
  * conversation, even an inactive one. Old hook activity becomes unknown.
  */
-export function aggregateAgentMetrics(conversations: readonly Conversation[], externalSessions: readonly External[], nowSeconds = Math.floor(Date.now() / 1000)): Record<AgentId, AgentMetrics> {
+export function aggregateAgentMetrics(conversations: readonly Conversation[], externalSessions: readonly External[], nowSeconds = Math.floor(Date.now() / 1000)): Record<ChatAgent, AgentMetrics> {
   const now = Number.isFinite(nowSeconds) && nowSeconds >= 0 ? nowSeconds : Math.floor(Date.now() / 1000);
   const managed = new Map<string, Conversation>();
-  for (const conversation of conversations) {
-    if (!AGENT_IDS.includes(conversation.agent) || !validId(conversation.id)) continue;
+  const workerRecords:Conversation[]=conversations.flatMap(parent=>Object.values(parent.workers??{}).map(worker=>({id:`${parent.id}:${worker.id}`,agent:worker.agent,sessionId:worker.usage?.sessionId??null,runId:worker.status==="running"&&active(parent)?parent.runId:null,status:worker.status==="running"&&active(parent)?"running":worker.status==="failed"?"failed":"completed",approval:null,updatedAt:parent.updatedAt,usage:worker.usage,activities:worker.activities,processCount:worker.processCount})));
+  for (const conversation of [...conversations,...workerRecords]) {
+    if (!CHAT_PROFILES.includes(conversation.agent) || !validId(conversation.id)) continue;
     const old = managed.get(conversation.id);
     if (!old || conversation.updatedAt >= old.updatedAt) managed.set(conversation.id, conversation);
   }
@@ -137,7 +140,7 @@ export function aggregateAgentMetrics(conversations: readonly Conversation[], ex
       if (item.provider === "codex" && conversation.agent === "codex" && item.kind === "subagent" && item.source === "item/collabAgentToolCall.agentsStates" && validId(item.id) && item.sessionId === conversation.sessionId && item.runId === conversation.runId) nativeChildren.add(nativeKey("codex", item.id));
     }
   }
-  return Object.fromEntries(AGENT_IDS.map((provider) => {
+  return Object.fromEntries(CHAT_PROFILES.map((provider) => {
     const records = [...managed.values()].filter((conversation) => conversation.agent === provider);
     const groups = new Map<string, Conversation[]>();
     for (const conversation of records) {
@@ -189,7 +192,7 @@ export function aggregateAgentMetrics(conversations: readonly Conversation[], ex
       badge: activeTotal ? `${activeTotal}${externalUnknown ? "+?" : ""}` : externalUnknown ? "?" : "",
     };
     return [provider, metric];
-  })) as Record<AgentId, AgentMetrics>;
+  })) as Record<ChatAgent, AgentMetrics>;
 }
 
 export function countLabel(metric: CountMetric): string {

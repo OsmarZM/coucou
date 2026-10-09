@@ -7,6 +7,8 @@ import "./settings.css";
 import { Bridge, onEvent, type HookStatus } from "../core/bridge";
 import { DEFAULT_SETTINGS, type Settings } from "../core/state";
 import { h, clear } from "../views/dom";
+import { buildManagedModelsSection } from "./managed-models";
+import { buildHermesSection } from "./hermes";
 
 let settings: Settings = { ...DEFAULT_SETTINGS };
 let version = "";
@@ -458,9 +460,13 @@ async function main() {
   for (const k of keys) present[k] = (await Bridge.secretPresent(k)) ?? false;
 
   clear(root);
+  const managedModels=await buildManagedModelsSection();
+  const hermes=await buildHermesSection();
   root.append(
     h("h1", {}, h("span", { text: "Coucou" }), h("span", { class: "version", text: version })),
-    h("section", {}, h("h2", {}, h("span", { text: tr("Chat through local CLIs") })), h("div", { class: "hint", text: tr("Choose Codex, Claude Code, Gemini or Copilot in the island chat, then enter the project folder. Each CLI uses its own existing login and usage limits. CLI chat does not need the Anthropic API key or activity hooks. Start in read-only mode; allowing changes is an explicit choice per conversation.") })),
+    managedModels,
+    hermes,
+    h("section", {}, h("h2", {}, h("span", { text: "Agentes e monitoramento" })), h("div", { class: "hint", text: "Escolha o agente pelos personagens na guia principal. A conversa pessoal compartilha o contexto e pede acesso a arquivos conforme necessário. O modo projeto e a inspeção de sessões ficam nas opções avançadas. Cada CLI conserva seu login e sua cota." })),
     ...CLI_AGENTS.map((def, index) => agentSection(def, agentStates[index].status, agentStates[index].error)),
     apiSection(hasKey),
     integrationsSection(present),

@@ -328,13 +328,38 @@ pub async fn documents_ingest(
     store: State<'_, PersonalStore>,
     conversation_id: String,
     paths: Vec<String>,
+    operation_id: Option<String>,
+    operations: State<'_, documents::ImportOperations>,
 ) -> Result<Vec<documents::Attachment>, String> {
     if window.label() != island::WINDOW_LABEL || shared.paused.load(Ordering::Relaxed) {
         return Err("Abra o Coucou para anexar documentos.".into());
     }
     let service = document_service(&store)?;
-    let (_cancel, receiver) = tokio::sync::watch::channel(false);
-    service.ingest(&conversation_id, &paths, receiver).await
+    let id = operation_id.unwrap_or_else(|| {
+        format!(
+            "import-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        )
+    });
+    let lease = operations.begin(id, window.label())?;
+    let receiver = lease.receiver.clone();
+    tokio::select! { biased;
+        _=documents::cancelled(receiver.clone()) => Err("Importação cancelada. Os anexos concluídos continuam disponíveis.".into()),
+        result=tokio::time::timeout(std::time::Duration::from_secs(60),service.ingest(&conversation_id,&paths,receiver)) => result.map_err(|_|"A importação excedeu 60 segundos. Confira os anexos antes de tentar novamente.".to_string())?,
+    }
+}
+#[tauri::command]
+pub fn documents_cancel(
+    window: WebviewWindow,
+    operations: State<'_, documents::ImportOperations>,
+    operation_id: String,
+) -> Result<bool, String> {
+    readable(&window)?;
+    Ok(operations.cancel(&operation_id, window.label()))
 }
 #[tauri::command]
 pub async fn documents_list(

@@ -6,7 +6,7 @@ import { AGENT_IDS, AGENT_META, agentForTask, SessionStore, type AgentId } from 
 import { AgentChat } from "./agent-chat";
 import type { VisibilityMode } from "../island/fsm";
 
-export type AgentSource = "claudeCode" | "codex" | "gemini" | "copilot" | "n8n";
+export type AgentSource = "claudeCode" | "codex" | "gemini" | "copilot" | "hermes" | "n8n";
 export type PillBadge = "approval" | "finished" | "error";
 
 export interface AgentTask {
@@ -67,6 +67,7 @@ const task = (
 
 /** Agent groups remain fixed; sessions never create unbounded UI pills. */
 export const INTEGRATION_AGENTS: AgentTask[] = [
+  task("hermes", "Hermes", "#F6AD55", "hermes"),
   ...AGENT_IDS.map((agent) => {
     const meta = AGENT_META[agent];
     return task(meta.taskId, meta.name, meta.color, meta.source);
@@ -272,7 +273,7 @@ export class AppState {
   loadIntegrationTasks() {
     for (const proto of INTEGRATION_AGENTS) {
       const shouldLoad =
-        agentForTask(proto.id) != null || this.settings.activeIntegrations.includes(proto.id);
+        proto.id === "hermes" || agentForTask(proto.id) != null || this.settings.activeIntegrations.includes(proto.id);
       const idx = this.tasks.findIndex((t) => t.id === proto.id);
       if (shouldLoad && idx < 0) this.tasks.push({ ...proto, steps: [] });
       if (!shouldLoad && idx >= 0) this.tasks.splice(idx, 1);
