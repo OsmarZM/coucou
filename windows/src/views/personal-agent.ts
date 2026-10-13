@@ -12,7 +12,7 @@ import {ingestConversationAttachments} from '../personal/core/attachments';
 
 export function buildPersonalAgent(onHeightChange:()=>void):ViewHost & {setActive(active:boolean):void} {
  let active=false; let learned=false;
- const chat=buildPrompt(onHeightChange,()=>{ learned=true; sync(); onHeightChange(); });
+ const chat=buildPrompt(onHeightChange,()=>{ learned=true; sync(); onHeightChange(); },true);
  const knowledge=buildLearned({setView(view){ learned=view==='learned'; sync(); onHeightChange(); }});
  chat.el.classList.remove('view');
  knowledge.el.classList.remove('view');

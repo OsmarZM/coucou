@@ -22,7 +22,7 @@ function bubble(role: "user" | "assistant", content: string, agent?: string, cre
   if(role === "assistant") { const body=h("div"); renderMarkdown(body,content); text.append(body); } else text.append(h("span", { text: content })); if (truncated) text.append(h("div", { class: "chat-message-meta", text: tr("chat.historyExcerpt") })); row.append(text); return row;
 }
 
-export function buildPrompt(onHeightChange: () => void, openLearned: () => void = () => {}): ViewHost {
+export function buildPrompt(onHeightChange: () => void, openLearned: () => void = () => {}, compact = false): ViewHost {
   const identity = h("div", { class: "chat-identity", role: "status", "aria-label": "Agente ativo" });
   const newButton = h("button", { class: "chat-action", text: tr("chat.applyProject"), title: tr("chat.newHint") });
   const refresh = h("button", { class: "chat-action", text: "↻", title: tr("chat.refresh"), "aria-label": tr("chat.refresh") });
@@ -50,7 +50,12 @@ export function buildPrompt(onHeightChange: () => void, openLearned: () => void 
   const stop = h("button", { class: "chat-action chat-stop", text: tr("chat.stop") });
   const attach = h("button", { class: "chat-action", title: tr("chat.attachHint"), "aria-label": tr("chat.attach") }, svg(ICONS.plus, 11));
   const footer = h("div", { class: "chat-muted chat-storage" });
-  const el = h("div", { class: "view" }, h("div", { class: "card wash chat-card" }, h("div", { class: "chat-body" }, h("div", { class: "chat-controls" }, identity, learned), advanced, notice, attachmentScope, chipRow, documentActions, log, approvalBox, h("div", { class: "chat-bar" }, attach, input, stop, send), footer)));
+  // The main conversation needs no project/session header; CLI views retain their controls.
+  const bar = h("div", { class: "chat-bar" }, attach, input, stop, send);
+  const body = compact
+    ? h("div", { class: "chat-body" }, log, notice, approvalBox, chipRow, documentActions, bar)
+    : h("div", { class: "chat-body" }, h("div", { class: "chat-controls" }, identity, learned), advanced, notice, attachmentScope, chipRow, documentActions, log, approvalBox, bar, footer);
+  const el = h("div", { class: "view" }, h("div", { class: "card wash chat-card" }, body));
   (el.querySelector(".card") as HTMLElement).style.setProperty("--wash", "rgba(99,102,241,0.5)");
   let apiSending = false;
   let apiNextId = Math.max(0, ...State.chatHistory.map((message) => message.id)) + 1;
@@ -115,7 +120,7 @@ export function buildPrompt(onHeightChange: () => void, openLearned: () => void 
   });
   async function submit(summary = false) {
     const query = summary ? DOCUMENT_SUMMARY_QUERY : input.value.trim();
-    if (!query) { localError = AgentChat.current && Attachments.selectedIds(AgentChat.current.id).length ? "Os arquivos estão anexados. Use Ler e resumir ou escreva uma pergunta antes de enviar." : "Escreva uma mensagem ou anexe um documento para ler e resumir."; State.notify(); return; }
+    if (!query) { localError = compact ? "Escreva o que deseja fazer com os arquivos ou envie uma mensagem." : AgentChat.current && Attachments.selectedIds(AgentChat.current.id).length ? "Os arquivos estão anexados. Use Ler e resumir ou escreva uma pergunta antes de enviar." : "Escreva uma mensagem ou anexe um documento para ler e resumir."; State.notify(); return; }
     if (State.paused) { localError = tr("chat.paused"); State.notify(); return; }
     localError = null;
     if (AgentChat.provider !== "anthropic") {
@@ -183,7 +188,7 @@ export function buildPrompt(onHeightChange: () => void, openLearned: () => void 
     if (draftKey !== nextDraftKey) { saveDraft(); draftKey = nextDraftKey; input.value = draftKey === PERSONAL_CONTEXT_ID ? AgentChat.personalDraft : drafts.get(draftKey) ?? (conversation?.id === draftKey ? conversation.draft : ""); }
     if (conversation && Attachments.takeSummaryRequest(conversation.id)) {
       if (!input.value.trim()) { input.value = DOCUMENT_SUMMARY_QUERY; saveDraft(); }
-      else localError = "Seu rascunho foi preservado. Use Ler e resumir para consultar os anexos sem substituí-lo.";
+      else localError = compact ? "Seu rascunho foi preservado. Escreva uma pergunta sobre os anexos quando terminar." : "Seu rascunho foi preservado. Use Ler e resumir para consultar os anexos sem substituí-lo.";
     }
     const availability = AgentChat.statuses.find((status) => status.agent === AgentChat.provider);
     writable.disabled = availability?.readonlyOnly === true || !cwd.value.trim(); copySession.disabled = !resume.value; revoke.disabled = !conversation;
@@ -198,14 +203,16 @@ export function buildPrompt(onHeightChange: () => void, openLearned: () => void 
     attach.hidden = !cli; attach.disabled = documentsLocked || State.paused || !!docs?.busy;
     input.disabled = active || State.paused; send.disabled = active || documentsLocked || State.paused || !!docs?.busy || (cli && availability?.available === false);
     documentActions.hidden = !cli || !!conversation?.approval || (!docs?.items.length && !docs?.busy);
-    summarize.hidden = !docs?.items.length;
+    summarize.hidden = compact || !docs?.items.length;
     summarize.disabled = send.disabled || !conversation || !Attachments.selectedIds(conversation.id).length;
     cancelImport.hidden = !docs?.busy || !docs.importing || !["importing", "cancelling"].includes(docs.importing.status);
     cancelImport.disabled = docs?.importing?.status === "cancelling";
     cancelImport.textContent = docs?.importing?.status === "cancelling" ? "Cancelando importação…" : "Cancelar importação";
-    input.placeholder = formatText("chat.ask", { agent: cli ? agentLabel(AgentChat.provider) : "Anthropic" });
+    if (compact) documentActions.hidden = cancelImport.hidden;
+    input.placeholder = compact ? "Pergunte ao Coucou…" : formatText("chat.ask", { agent: cli ? agentLabel(AgentChat.provider) : "Anthropic" });
     const statusText = localError || (State.paused ? tr("chat.paused") : conversation?.error) || docs?.error || (cli ? AgentChat.statusError : null) || (docs?.busy ? tr("chat.attachBusy") : "") || (cli && availability && !availability.available ? availability.detail : "") || (formDirty && cli ? tr("chat.changed") : "") || (conversation?.status === "stopping" ? tr("chat.waitStop") : "") || (cli && !conversation?.messages.length && conversation?.sessionId ? tr("chat.nativeHistory") : "") || (cli && availability?.detail ? availability.detail : "") || (cli && !IS_TAURI ? tr("chat.browser") : "");
-    notice.textContent = statusText; notice.hidden = !statusText; notice.title = statusText;
+    const visibleStatus = compact ? localError || (State.paused ? tr("chat.paused") : conversation?.error) || docs?.error || (cli ? AgentChat.statusError : null) || (docs?.busy ? tr("chat.attachBusy") : "") || (cli && availability && !availability.available ? availability.detail : "") || (conversation?.status === "stopping" ? tr("chat.waitStop") : "") || "" : statusText;
+    notice.textContent = visibleStatus; notice.hidden = !visibleStatus; notice.title = visibleStatus;
     const attachmentsKey = `${conversation?.id}:${documentsLocked}:${docs?.busy}:${JSON.stringify(docs?.items)}:${JSON.stringify([...(docs?.selected ?? [])])}`;
     if (chipRow.dataset.key !== attachmentsKey) {
       chipRow.dataset.key = attachmentsKey; clear(chipRow);
@@ -227,12 +234,12 @@ export function buildPrompt(onHeightChange: () => void, openLearned: () => void 
       const usageOpen = (log.querySelector(".chat-usage") as HTMLDetailsElement | null)?.open ?? false; clear(log);
       for (const message of messages) if (message.content) log.append(bubble(message.role, message.content, "agent" in message ? message.agent : undefined, "createdAt" in message ? message.createdAt : undefined, "contentTruncated" in message && message.contentTruncated));
       if (conversation?.tools.length) log.append(h("details", { class: "chat-tools" }, h("summary", { text: conversation.tools.at(-1) }), h("pre", { text: conversation.tools.join("\n\n") })));
-      if (conversation?.context) log.append(h("div", { class: "chat-muted", text: `${formatText("chat.contextApplied", { memories: conversation.context.memories.length, skills: conversation.context.skills.length })}${conversation.context.truncated ? ` · ${tr("chat.partial")}` : ""}` }));
+      if (!compact && conversation?.context) log.append(h("div", { class: "chat-muted", text: `${formatText("chat.contextApplied", { memories: conversation.context.memories.length, skills: conversation.context.skills.length })}${conversation.context.truncated ? ` · ${tr("chat.partial")}` : ""}` }));
       if (conversation?.contextId === PERSONAL_CONTEXT_ID && AgentChat.contextTruncated) log.append(h("div", { class: "chat-muted", text: tr("chat.timelineLimited") }));
       if (docs?.preparation) log.append(h("div", { class: "chat-muted", text: `${formatText("chat.documentContext", { used: docs.preparation.usedChars, budget: docs.preparation.budgetChars })}${docs.preparation.partial ? ` · ${tr("chat.partial")}` : ""}` }));
       if (conversation && (conversation.usage || conversation.processCount !== null || Object.keys(conversation.activities).length)) { const usage = usagePanel(conversation); usage.open = usageOpen; log.append(usage); }
       if (active && !conversation?.approval) log.append(h("div", { class: "chat-row", "aria-label": tr("chat.working") }, h("div", { class: "typing" }, h("i"), h("i"), h("i"))));
-      if (!messages.length && !active) log.append(h("div", { class: "chat-empty", text: tr(cli ? "chat.empty" : "chat.apiEmpty") }));
+      if (!compact && !messages.length && !active) log.append(h("div", { class: "chat-empty", text: tr(cli ? "chat.empty" : "chat.apiEmpty") }));
       if (nearEnd || messages.length <= 2) log.scrollTop = log.scrollHeight;
     }
     const approval = conversation?.approval;
