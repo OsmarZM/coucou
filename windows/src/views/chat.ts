@@ -1,20 +1,19 @@
 import { h, svg, clear } from "./dom";
 import { ICONS } from "./icons";
 import { Bridge, IS_TAURI, type ChatContext } from "../core/bridge";
-import { AgentChat, PERSONAL_CONTEXT_ID, cancelAgentChat, chatDiagnostic, decideAgentChat, denyAgentChatApproval, refreshAgentChatStatus, sendAgentChat, setApprovalInteractionGuard, type AgentConversation } from "../core/agent-chat";
-import { Attachments, attachmentScopeBusy, ingestConversationAttachments, setAttachmentConversationResolver } from "../core/attachments";
+import { AgentChat, PERSONAL_CONTEXT_ID, agentDisplayName, cancelAgentChat, chatDiagnostic, decideAgentChat, denyAgentChatApproval, refreshAgentChatStatus, sendAgentChat, setApprovalInteractionGuard, type AgentConversation } from "../core/agent-chat";
+import { Attachments, DOCUMENT_SUMMARY_QUERY, attachmentScopeBusy, attachmentStatusLabel, ingestConversationAttachments, setAttachmentConversationResolver } from "../core/attachments";
 import { Personal } from "../core/personal";
+import { runtimeAvailability, type RuntimeToolSpec } from "../core/agent-runtime";
 import { tr, formatText } from "../core/i18n";
 import { State } from "../core/state";
 import { Sound } from "../core/sound";
 import { usagePanel } from "./usage";
-import { AGENT_META, type AgentId } from "../core/sessions";
+import { AGENT_META } from "../core/sessions";
 import { createMiniBot } from "../mochi/minibots";
 import type { ViewHost } from "./views";
 
-const PROVIDERS = [["codex", "Codex"], ["claude", "Claude"], ["gemini", "Gemini"], ["copilot", "Copilot"], ["anthropic", "Anthropic API"]];
-const agentLabel = (agent: string) => PROVIDERS.find(([id]) => id === agent)?.[1] ?? agent;
-const projectName = (cwd: string) => cwd.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || tr("chat.personal");
+const agentLabel = (agent: string) => agentDisplayName(agent);
 function bubble(role: "user" | "assistant", content: string, agent?: string, createdAt?: number, truncated = false) {
   const row = h("div", { class: role === "user" ? "chat-row user" : "chat-row" });
   const text = h("div", { class: role === "user" ? "bubble" : "reply" });
@@ -23,19 +22,7 @@ function bubble(role: "user" | "assistant", content: string, agent?: string, cre
 }
 
 export function buildPrompt(onHeightChange: () => void, openLearned: () => void = () => {}): ViewHost {
-  const characters = h("div", { class: "chat-characters", role: "group", "aria-label": tr("chat.characters") });
-  const characterButtons = new Map<AgentId, HTMLButtonElement>();
-  for (const agent of ["codex", "claude", "gemini", "copilot"] as const) {
-    const meta = AGENT_META[agent]; const task = State.tasks.find((entry) => entry.id === meta.taskId);
-    const button = h("button", { class: "chat-character", "aria-label": formatText("chat.chooseCharacter", { agent: meta.name }), title: meta.name }, task ? createMiniBot(task, 18) : h("span", { text: meta.name[0] }), h("span", { text: meta.name.replace(" CLI", "").replace("GitHub ", "") }));
-    button.style.setProperty("--character-color", meta.color); characters.append(button); characterButtons.set(agent, button);
-    button.addEventListener("click", () => {
-      saveDraft(); const current = AgentChat.current;
-      if (current?.approval) void denyAgentChatApproval(current.id);
-      AgentChat.selectPersonal(agent); State.setFocus(meta.taskId); selectedForm = ""; formDirty = false; localError = null; State.notify();
-    });
-  }
-  const conversations = h("select", { class: "chat-select chat-conversations", "aria-label": tr("chat.conversation") });
+  const identity = h("div", { class: "chat-identity", role: "status", "aria-label": "Agente ativo" });
   const newButton = h("button", { class: "chat-action", text: tr("chat.applyProject"), title: tr("chat.newHint") });
   const refresh = h("button", { class: "chat-action", text: "↻", title: tr("chat.refresh"), "aria-label": tr("chat.refresh") });
   const learned = h("button", { class: "chat-action", text: tr("personal.title"), onclick: openLearned });
@@ -45,11 +32,16 @@ export function buildPrompt(onHeightChange: () => void, openLearned: () => void 
   const resume = h("input", { class: "chat-config-input", placeholder: tr("chat.resume"), "aria-label": tr("chat.resume"), spellcheck: "false", autocomplete: "off" });
   const copySession = h("button", { class: "chat-action", text: tr("chat.copy"), "aria-label": tr("chat.copyHint") });
   const revoke = h("button", { class: "chat-action", text: tr("chat.revoke") });
-  const api = h("button", { class: "chat-action", text: tr("chat.apiManual") });
-  const advanced = h("details", { class: "chat-advanced" }, h("summary", { text: tr("chat.advanced") }), h("div", { class: "chat-controls" }, cwd, writeLabel), h("div", { class: "chat-controls" }, resume, copySession, newButton), h("div", { class: "chat-controls" }, conversations, refresh, api), h("div", { class: "chat-controls" }, h("span", { class: "chat-muted", text: tr("chat.closeTerminal") }), revoke));
+  const projectControls=h("div", {},h("div", { class: "chat-controls" }, cwd, writeLabel),h("div", { class: "chat-controls" }, resume, copySession, newButton),h("span", { class: "chat-muted", text: tr("chat.closeTerminal") }));
+  const hermesHint=h("div", {class:"chat-muted",text:"Hermes usa o contexto pessoal. Para trabalhar diretamente em um projeto, escolha Codex ou Claude na guia principal."});
+  const runtimeHint = h("div", { class: "chat-muted", hidden: "true" });
+  const advanced = h("details", { class: "chat-advanced" }, h("summary", { text: tr("chat.advanced") }),projectControls,hermesHint,runtimeHint,h("div",{class:"chat-controls"},refresh,revoke));
   const notice = h("div", { class: "chat-notice", role: "status" });
   const chipRow = h("div", { class: "chat-attachments" });
   const attachmentScope = h("div", { class: "chat-muted", text: tr("chat.sharedAttachments") });
+  const summarize = h("button", { class: "chat-action", text: "Ler e resumir", title: "Compartilha os anexos selecionados com o modelo do agente ativo e solicita um resumo." });
+  const cancelImport = h("button", { class: "chat-action", text: "Cancelar importação" });
+  const documentActions = h("div", { class: "chat-controls chat-attachment-actions" }, summarize, cancelImport);
   const log = h("div", { class: "chat-log", role: "log", "aria-label": tr("chat.messages") });
   const approvalBox = h("div", { class: "chat-permission" });
   const input = h("input", { type: "text", class: "chat-input", "aria-label": tr("chat.message"), maxlength: "16384" });
@@ -57,7 +49,7 @@ export function buildPrompt(onHeightChange: () => void, openLearned: () => void 
   const stop = h("button", { class: "chat-action chat-stop", text: tr("chat.stop") });
   const attach = h("button", { class: "chat-action", title: tr("chat.attachHint"), "aria-label": tr("chat.attach") }, svg(ICONS.plus, 11));
   const footer = h("div", { class: "chat-muted chat-storage" });
-  const el = h("div", { class: "view" }, h("div", { class: "card wash chat-card" }, h("div", { class: "chat-body" }, h("div", { class: "chat-controls" }, characters, learned), advanced, notice, attachmentScope, chipRow, log, approvalBox, h("div", { class: "chat-bar" }, attach, input, stop, send), footer)));
+  const el = h("div", { class: "view" }, h("div", { class: "card wash chat-card" }, h("div", { class: "chat-body" }, h("div", { class: "chat-controls" }, identity, learned), advanced, notice, attachmentScope, chipRow, documentActions, log, approvalBox, h("div", { class: "chat-bar" }, attach, input, stop, send), footer)));
   (el.querySelector(".card") as HTMLElement).style.setProperty("--wash", "rgba(99,102,241,0.5)");
   let apiSending = false;
   let apiNextId = Math.max(0, ...State.chatHistory.map((message) => message.id)) + 1;
@@ -68,6 +60,8 @@ export function buildPrompt(onHeightChange: () => void, openLearned: () => void 
   AgentChat.selectPersonal(AgentChat.provider === "anthropic" ? "codex" : AgentChat.provider);
   setApprovalInteractionGuard(() => State.mode === "expanded" && State.view === "prompt" && !State.paused);
   if (IS_TAURI && !Personal.preferencesLoaded) void Personal.loadPreferences();
+  let runtimeTools: RuntimeToolSpec[] = [];
+  if (IS_TAURI) void Bridge.agentRuntimeTools().then((tools) => { runtimeTools = tools; State.notify(); }).catch(() => {});
   function saveDraft() {
     if (draftKey === PERSONAL_CONTEXT_ID) AgentChat.setPersonalDraft(input.value);
     if (draftKey) drafts.set(draftKey, input.value);
@@ -87,7 +81,7 @@ export function buildPrompt(onHeightChange: () => void, openLearned: () => void 
     conversation.draft = draft; drafts.set(conversation.id, draft);
     selectedForm = conversation.id; fillForm(conversation); localError = null; onHeightChange(); return conversation;
   }
-  function formConversation() { if (formDirty) throw new Error(tr("chat.applyBeforeSend")); const current = AgentChat.current; return !current || current.agent !== AgentChat.provider ? AgentChat.selectPersonal(AgentChat.provider as AgentId) : current; }
+  function formConversation() { if (formDirty) throw new Error(tr("chat.applyBeforeSend")); if (AgentChat.provider === "anthropic") throw new Error(tr("chat.apiAttachments")); const current = AgentChat.current; return !current || current.agent !== AgentChat.provider ? AgentChat.selectPersonal(AgentChat.provider) : current; }
   setAttachmentConversationResolver(formConversation);
   function changeConfig() { saveDraft(); if (!resumeEdited) resume.value = ""; formDirty = true; localError = null; State.notify(); }
   cwd.addEventListener("input", changeConfig); writable.addEventListener("change", changeConfig);
@@ -102,14 +96,6 @@ export function buildPrompt(onHeightChange: () => void, openLearned: () => void 
     try { await Bridge.focusWindow(true); await denyAgentChatApproval(conversation.id); await Bridge.permissionsRevoke(conversation.id); localError = tr("chat.revoked"); }
     catch (error) { localError = chatDiagnostic(error); } State.notify();
   });
-  api.addEventListener("click", () => { saveDraft(); if (AgentChat.current?.approval) void denyAgentChatApproval(AgentChat.current.id); AgentChat.setProvider("anthropic"); selectedForm = ""; localError = null; State.notify(); });
-  conversations.addEventListener("change", () => {
-    const chosen = AgentChat.conversations.find((entry) => entry.id === conversations.value);
-    if (!chosen || !window.confirm(formatText("chat.openChannelConfirm", { agent: agentLabel(chosen.agent), session: chosen.sessionId ?? chosen.id, cwd: chosen.cwd || tr("chat.personal") }))) { conversations.value = AgentChat.current?.id ?? ""; return; }
-    saveDraft(); const current = AgentChat.current;
-    if (current?.approval && current.id !== conversations.value) void denyAgentChatApproval(current.id);
-    if (AgentChat.select(conversations.value)) { selectedForm = ""; localError = null; State.notify(); }
-  });
   newButton.addEventListener("click", () => {
     try { if (!formDirty) return; if (!window.confirm(formatText("chat.openChannelConfirm", { agent: agentLabel(AgentChat.provider), session: resumeEdited && resume.value ? resume.value : tr("chat.newSession"), cwd: cwd.value || tr("chat.personal") }))) return; if (AgentChat.current?.approval) void denyAgentChatApproval(AgentChat.current.id); if (!resumeEdited) resume.value = ""; createConversation(); }
     catch (error) { localError = chatDiagnostic(error); State.notify(); }
@@ -120,23 +106,35 @@ export function buildPrompt(onHeightChange: () => void, openLearned: () => void 
     try { const conversation = formConversation(); const paths = await Bridge.documentsChoose(); if (paths.length) await ingestConversationAttachments(conversation.id, paths); }
     catch (error) { localError = chatDiagnostic(error); State.notify(); }
   });
-  async function submit() {
-    const query = input.value.trim(); if (!query || State.paused) return; localError = null;
+  cancelImport.addEventListener("click", async () => {
+    const conversation = AgentChat.current; if (!conversation) return;
+    try { await Attachments.cancelImport(conversation.id); }
+    catch (error) { localError = chatDiagnostic(error); }
+    State.notify();
+  });
+  async function submit(summary = false) {
+    const query = summary ? DOCUMENT_SUMMARY_QUERY : input.value.trim();
+    if (!query) { localError = AgentChat.current && Attachments.selectedIds(AgentChat.current.id).length ? "Os arquivos estão anexados. Use Ler e resumir ou escreva uma pergunta antes de enviar." : "Escreva uma mensagem ou anexe um documento para ler e resumir."; State.notify(); return; }
+    if (State.paused) { localError = tr("chat.paused"); State.notify(); return; }
+    localError = null;
     if (AgentChat.provider !== "anthropic") {
       try {
         const availability = AgentChat.statuses.find((status) => status.agent === AgentChat.provider);
         if (availability && !availability.available) throw new Error(availability.detail || tr("chat.unavailable"));
         if (availability?.readonlyOnly && writable.checked) throw new Error(tr("chat.readonly"));
-        if (!cwd.value.trim() && !(availability?.personalSupported ?? ["codex", "claude"].includes(AgentChat.provider))) throw new Error(tr("chat.personalUnavailable"));
-        const conversation = formConversation(); if (conversation.runId || Attachments.get(conversation.id).busy) return;
+        if (!cwd.value.trim() && !(availability?.personalSupported ?? ["codex", "claude", "hermes"].includes(AgentChat.provider))) throw new Error(tr("chat.personalUnavailable"));
+        const conversation = formConversation();
+        if (conversation.runId || attachmentScopeBusy(conversation.id)) throw new Error("Há uma execução usando este contexto. Aguarde sua conclusão ou cancele antes de enviar.");
+        if (Attachments.get(conversation.id).busy) throw new Error(tr("chat.attachBusy"));
+        if (summary && !Attachments.selectedIds(conversation.id).length) throw new Error("Selecione ao menos um anexo com leitura disponível para resumir.");
         const submittedDraft = input.value;
         const accepted = await sendAgentChat(conversation, query, Attachments.selectedIds(conversation.id));
-        if (accepted) {
+        if (accepted && !summary) {
           conversation.draft = ""; drafts.set(conversation.id, "");
           if (conversation.contextId === PERSONAL_CONTEXT_ID && AgentChat.personalDraft === submittedDraft) { AgentChat.setPersonalDraft(""); drafts.set(PERSONAL_CONTEXT_ID, ""); }
           if ((draftKey === conversation.id || draftKey === conversation.contextId) && input.value === submittedDraft) input.value = "";
-          Sound.play("send");
         }
+        if (accepted) Sound.play("send");
       } catch (error) { localError = chatDiagnostic(error); }
       State.notify(); onHeightChange(); return;
     }
@@ -151,8 +149,10 @@ export function buildPrompt(onHeightChange: () => void, openLearned: () => void 
     finally { apiSending = false; State.stateOverride = null; State.notify(); onHeightChange(); }
   }
   send.addEventListener("click", () => { void submit(); });
+  summarize.addEventListener("click", () => { void submit(true); });
   input.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); void submit(); } event.stopPropagation(); });
-  for (const field of [input, cwd, resume, conversations]) { field.addEventListener("keydown", (event) => event.stopPropagation()); field.addEventListener("pointerdown", () => { void Bridge.focusWindow(true); }); }
+  for (const field of [input, cwd, resume]) { field.addEventListener("keydown", (event) => event.stopPropagation()); field.addEventListener("pointerdown", () => { void Bridge.focusWindow(true); }); }
+  let identityKey = "";
   let resetClockKey = "";
   return { el, tick() {
     const quota = AgentChat.current?.usage?.quota;
@@ -161,24 +161,33 @@ export function buildPrompt(onHeightChange: () => void, openLearned: () => void 
   }, sync() {
     const cli = AgentChat.provider !== "anthropic";
     const conversation = cli && AgentChat.current?.agent === AgentChat.provider ? AgentChat.current : null;
-    for (const [agent, button] of characterButtons) { button.setAttribute("aria-pressed", String(AgentChat.provider === agent)); button.classList.toggle("on", AgentChat.provider === agent); button.disabled = apiSending; }
-    conversations.disabled = apiSending || !cli; newButton.disabled = apiSending || !cli; newButton.hidden = !cli; refresh.hidden = !cli;
+    const activeName = agentLabel(AgentChat.provider);
+    const nextIdentityKey = `${AgentChat.provider}:${activeName}`;
+    if (identityKey !== nextIdentityKey) {
+      identityKey = nextIdentityKey; clear(identity);
+      const meta = cli ? AGENT_META[AgentChat.provider as keyof typeof AGENT_META] : null;
+      const task = meta ? State.tasks.find((entry) => entry.id === meta.taskId) : null;
+      identity.append(task ? createMiniBot(task, 20) : h("span", { text: activeName[0] }), h("b", { text: activeName }), h("span", { class: "chat-muted", text: "Agente escolhido na guia principal" }));
+    }
+    newButton.disabled = apiSending || !cli; newButton.hidden = !cli; refresh.hidden = !cli;
     advanced.hidden = !!conversation?.approval; chipRow.hidden = !!conversation?.approval; footer.hidden = !!conversation?.approval;
+    const runtimeText = runtimeAvailability(AgentChat.provider, !conversation?.cwd, runtimeTools);
+    runtimeHint.hidden = !runtimeText;
+    runtimeHint.textContent = runtimeText ?? "";
+    projectControls.hidden=conversation?.agent==="hermes";hermesHint.hidden=conversation?.agent!=="hermes";
     footer.textContent = `${State.appVersion ? `Coucou ${State.appVersion} · ` : ""}${tr(cli ? conversation?.contextId === PERSONAL_CONTEXT_ID ? "chat.continuousContext" : "chat.separateChannel" : "chat.apiStorage")}`;
     if (conversation && selectedForm !== conversation.id) { selectedForm = conversation.id; fillForm(conversation); }
     if (conversation && !formDirty && nativeSessionShown !== conversation.sessionId) { resume.value = conversation.sessionId ?? ""; nativeSessionShown = conversation.sessionId; }
     const nextDraftKey = !cli ? "api" : conversation?.contextId === PERSONAL_CONTEXT_ID ? PERSONAL_CONTEXT_ID : conversation?.id ?? `new:${AgentChat.provider}`;
     if (draftKey !== nextDraftKey) { saveDraft(); draftKey = nextDraftKey; input.value = draftKey === PERSONAL_CONTEXT_ID ? AgentChat.personalDraft : drafts.get(draftKey) ?? (conversation?.id === draftKey ? conversation.draft : ""); }
+    if (conversation && Attachments.takeSummaryRequest(conversation.id)) {
+      if (!input.value.trim()) { input.value = DOCUMENT_SUMMARY_QUERY; saveDraft(); }
+      else localError = "Seu rascunho foi preservado. Use Ler e resumir para consultar os anexos sem substituí-lo.";
+    }
     const availability = AgentChat.statuses.find((status) => status.agent === AgentChat.provider);
     writable.disabled = availability?.readonlyOnly === true || !cwd.value.trim(); copySession.disabled = !resume.value; revoke.disabled = !conversation;
     if (availability?.readonlyOnly && !conversation?.writable) writable.checked = false;
     writeLabel.title = tr(availability?.readonlyOnly ? "chat.readonly" : "chat.writeHint");
-    const optionsKey = AgentChat.conversations.map((entry) => `${entry.id}:${entry.agent}:${entry.cwd}:${entry.sessionId}:${entry.status}:${!!entry.approval}`).join("|");
-    if (conversations.dataset.options !== optionsKey) {
-      conversations.dataset.options = optionsKey; clear(conversations); conversations.append(h("option", { value: "", text: tr("chat.choose") }));
-      for (const entry of AgentChat.conversations) conversations.append(h("option", { value: entry.id, text: `${entry.approval ? `${tr("chat.permission")} · ` : ""}${agentLabel(entry.agent)} · ${projectName(entry.cwd)} · ${(entry.sessionId ?? entry.id).slice(-6)} · ${tr(`chat.status.${entry.status}`)}` }));
-    }
-    conversations.value = cli ? conversation?.id ?? "" : "";
     const active = cli ? !!conversation?.runId : apiSending; const docs = conversation ? Attachments.get(conversation.id) : null;
     const documentsLocked = !!conversation && attachmentScopeBusy(conversation.id);
     attachmentScope.hidden = !docs?.items.length || !!conversation?.approval;
@@ -186,7 +195,13 @@ export function buildPrompt(onHeightChange: () => void, openLearned: () => void 
     if (conversation && IS_TAURI) Attachments.ensureLoaded(conversation.id);
     stop.hidden = !cli || !active; stop.disabled = conversation?.status === "stopping"; stop.textContent = tr(conversation?.status === "stopping" ? "chat.stopping" : "chat.stop");
     attach.hidden = !cli; attach.disabled = documentsLocked || State.paused || !!docs?.busy;
-    input.disabled = active || State.paused; send.disabled = active || State.paused || !!docs?.busy || (cli && availability?.available === false);
+    input.disabled = active || State.paused; send.disabled = active || documentsLocked || State.paused || !!docs?.busy || (cli && availability?.available === false);
+    documentActions.hidden = !cli || !!conversation?.approval || (!docs?.items.length && !docs?.busy);
+    summarize.hidden = !docs?.items.length;
+    summarize.disabled = send.disabled || !conversation || !Attachments.selectedIds(conversation.id).length;
+    cancelImport.hidden = !docs?.busy || !docs.importing || !["importing", "cancelling"].includes(docs.importing.status);
+    cancelImport.disabled = docs?.importing?.status === "cancelling";
+    cancelImport.textContent = docs?.importing?.status === "cancelling" ? "Cancelando importação…" : "Cancelar importação";
     input.placeholder = formatText("chat.ask", { agent: cli ? agentLabel(AgentChat.provider) : "Anthropic" });
     const statusText = localError || (State.paused ? tr("chat.paused") : conversation?.error) || docs?.error || (cli ? AgentChat.statusError : null) || (docs?.busy ? tr("chat.attachBusy") : "") || (cli && availability && !availability.available ? availability.detail : "") || (formDirty && cli ? tr("chat.changed") : "") || (conversation?.status === "stopping" ? tr("chat.waitStop") : "") || (cli && !conversation?.messages.length && conversation?.sessionId ? tr("chat.nativeHistory") : "") || (cli && availability?.detail ? availability.detail : "") || (cli && !IS_TAURI ? tr("chat.browser") : "");
     notice.textContent = statusText; notice.hidden = !statusText; notice.title = statusText;
@@ -200,8 +215,8 @@ export function buildPrompt(onHeightChange: () => void, openLearned: () => void 
         const remove = h("button", { class: "attachment-remove", text: "×", "aria-label": `${tr("chat.attachRemove")}: ${item.name}` }); remove.disabled = documentsLocked || !!docs?.busy;
         remove.addEventListener("click", () => { if (!attachmentScopeBusy(conversationId)) void Attachments.remove(conversationId, item.id).catch(() => {}); });
         const coverage = item.coverage;
-        const title = [item.name, item.kind.toUpperCase(), `${(item.size / 1024).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} KiB`, tr(item.status === "ready" ? "chat.ready" : item.status === "queued" ? "chat.queued" : item.status === "unsupported" ? "chat.unsupported" : "chat.attachError"), item.message, coverage?.totalPages != null ? formatText("chat.pageCoverage", { read: coverage.readPages ?? 0, total: coverage.totalPages }) : "", coverage?.truncated ? tr("chat.partial") : "", ...(coverage?.notes ?? [])].filter(Boolean).join(" · ");
-        chipRow.append(h("span", { class: "attachment-chip", title }, selected, h("span", { text: item.name }), coverage?.truncated ? h("span", { class: "chat-muted", text: tr("chat.partial") }) : null, remove));
+        const title = [item.name, item.kind.toUpperCase(), `${(item.size / 1024).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} KiB`, attachmentStatusLabel(item), item.message, coverage?.totalPages != null ? formatText("chat.pageCoverage", { read: coverage.readPages ?? 0, total: coverage.totalPages }) : "", coverage?.truncated ? tr("chat.partial") : "", ...(coverage?.notes ?? [])].filter(Boolean).join(" · ");
+        chipRow.append(h("span", { class: "attachment-chip", title }, selected, h("span", { text: item.name }), h("span", { class: "chat-muted", text: attachmentStatusLabel(item) }), remove));
       } else if (State.droppedFile) chipRow.append(h("span", { class: "attachment-chip", text: State.droppedFile.name }));
     }
     const messages = cli ? conversation?.contextId === PERSONAL_CONTEXT_ID ? AgentChat.timeline() : conversation?.messages ?? [] : State.chatHistory;

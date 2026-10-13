@@ -8,6 +8,7 @@ export type ChatProvider = ChatAgent | "anthropic";
 export const PERSONAL_CONTEXT_ID = "personal-main";
 export interface AgentChatMessage { id: string; role: "user" | "assistant"; content: string; agent: ChatAgent; createdAt: number; contentTruncated?: boolean }
 export interface TimelineMessage extends AgentChatMessage { conversationId: string }
+export interface SupervisorWorker { id:string; agent:"codex"|"claude"; runId:string; status:"running"|"completed"|"failed"; processCount:number|null; usage:AgentUsage|null; activities:Record<string,AgentActivity> }
 export type ChatDecision = "allow" | "allowConversation" | "deny";
 export interface ChatApproval { requestId: string; title: string; detail: string; choices: ChatDecision[]; submitting: boolean }
 export interface AgentConversation {
@@ -28,12 +29,18 @@ export interface AgentConversation {
   usage: AgentUsage | null;
   activities: Record<string, AgentActivity>;
   processCount: number | null;
+  workers:Record<string,SupervisorWorker>;
   context: { memories: ContextReference[]; skills: ContextReference[]; truncated: boolean } | null;
   history: { persisted: boolean; reason: string | null } | null;
 }
 interface ConversationConfig { agent: ChatAgent; cwd: string; writable: boolean; sessionId?: string | null; contextId?: string | null }
 interface MetadataStorage { getItem(key: string): string | null; setItem(key: string, value: string): void }
-const AGENTS: ChatAgent[] = ["codex", "claude", "gemini", "copilot"];
+const AGENTS: ChatAgent[] = ["codex", "claude", "gemini", "copilot", "hermes"];
+let hermesName = "Hermes";
+export function setHermesDisplayName(name: string) { hermesName = name.trim().slice(0, 64) || "Hermes"; }
+export function agentDisplayName(agent: ChatAgent | string): string {
+  return ({ codex: "Codex", claude: "Claude", gemini: "Gemini", copilot: "GitHub Copilot", hermes: hermesName, anthropic: "Anthropic" } as Record<string,string>)[agent] ?? agent;
+}
 const STORAGE_KEY = "coucou.cli-chat.metadata.v1";
 const MAX_CONVERSATIONS = 16;
 const MAX_MESSAGES = 100;
@@ -42,7 +49,7 @@ const MAX_QUERY = 16_384;
 let sequence = 0;
 const id = () => globalThis.crypto?.randomUUID?.() ?? `coucou-${Date.now()}-${++sequence}-${Math.random().toString(36).slice(2)}`;
 const bounded = (value: unknown, length: number) => typeof value === "string" ? value.slice(0, length) : "";
-const emptyExtras = () => ({ draft: "", usage: null, activities: {}, processCount: null, context: null, history: null });
+const emptyExtras = () => ({ draft: "", usage: null, activities: {}, processCount: null, workers:{}, context: null, history: null });
 const validUsage = (value: Record<string, unknown>, runId: string): value is Record<string, unknown> & AgentUsage => {
   if (value.runId !== runId || typeof value.provider !== "string" || !Number.isFinite(value.capturedAt)) return false;
   const quota = value.quota as AgentUsage["quota"] | undefined;
@@ -184,6 +191,8 @@ export class AgentChatStore {
     conversation.approval = null;
     conversation.tools = [];
     conversation.activities = {};
+    conversation.workers = {};
+    conversation.processCount = null;
     conversation.context = null;
     conversation.history = null;
     conversation.updatedAt = Date.now();
@@ -281,6 +290,24 @@ export class AgentChatStore {
         if (!Array.isArray(data.memories) || !Array.isArray(data.skills)) return false;
         conversation.context = { memories: data.memories.slice(0, 100) as ContextReference[], skills: data.skills.slice(0, 100) as ContextReference[], truncated: data.truncated === true };
         break;
+      case "worker": {
+        if(conversation.agent!=="hermes" || stopping || !["codex","claude"].includes(String(data.agent)) || typeof data.id!=="string" || !data.id || data.id.length>128 || !["running","completed","failed"].includes(String(data.status)))return false;
+        let worker=conversation.workers[data.id];
+        if(!worker){if(Object.keys(conversation.workers).length>=2)return false;worker=conversation.workers[data.id]={id:data.id,agent:data.agent as "codex"|"claude",runId:event.runId,status:"running",processCount:null,usage:null,activities:{}};}
+        if(worker.agent!==data.agent)return false;
+        worker.status=data.status as SupervisorWorker["status"];if(worker.status!=="running")worker.processCount=0;
+        break;
+      }
+      case "workerProcess":
+      case "workerUsage":
+      case "workerActivity": {
+        const worker=typeof data.workerId==="string"?conversation.workers[data.workerId]:null;
+        if(!worker || worker.agent!==data.agent || worker.runId!==event.runId)return false;
+        if(event.kind==="workerProcess"){if(!Number.isInteger(data.processCount)||Number(data.processCount)<0)return false;worker.processCount=Math.min(64,Number(data.processCount));}
+        if(event.kind==="workerUsage"){const usage=data.usage as Record<string,unknown>;if(!usage||!validUsage(usage,event.runId)||usage.provider!==worker.agent)return false;worker.usage=structuredClone(usage);}
+        if(event.kind==="workerActivity"){const activity=data.activity as AgentActivity;if(!activity || activity.provider!==worker.agent || activity.runId!==event.runId || !["tool","subagent"].includes(activity.kind) || !activity.id || activity.id.length>512 || Object.keys(worker.activities).length>=64)return false;worker.activities[`${activity.kind}:${activity.id}`]=structuredClone(activity);}
+        break;
+      }
       case "history":
         if (typeof data.persisted !== "boolean") return false;
         conversation.history = { persisted: data.persisted, reason: data.reason == null ? null : chatDiagnostic(data.reason) };
@@ -302,6 +329,7 @@ export class AgentChatStore {
         conversation.approval = null;
         conversation.activities = {};
         conversation.processCount = 0;
+        for(const worker of Object.values(conversation.workers)){if(worker.status==="running")worker.status="failed";worker.processCount=0;}
         break;
       default: return false;
     }

@@ -1,4 +1,4 @@
-**Windows / português:** [instalação passo a passo do Coucou pessoal 0.1.3](README-WINDOWS.md), incluindo CLIs, autenticação, build, instalador e uso dos personagens.
+**Windows / português:** [instalação passo a passo do Coucou pessoal 0.1.4](README-WINDOWS.md), incluindo CLIs, Hermes supervisor, FreeLLMAPI opcional, autenticação, build, instalador e uso dos personagens.
 
 <div align="center">
 
@@ -140,11 +140,23 @@ Everything else, troubleshooting included, is in [docs/IPHONE.md](docs/IPHONE.md
 ### Windows
 
 This checkout includes a local Windows personal-agent implementation, version
-0.1.3. Follow the [step-by-step Portuguese installation guide](README-WINDOWS.md)
+0.1.4. Follow the [step-by-step Portuguese installation guide](README-WINDOWS.md)
 to prepare the computer, install and authenticate the CLIs, generate the installer
 and use the animated characters with a continuous personal context.
 
-Windows 0.1.3 enables chat through Codex CLI and Claude Code. Gemini CLI and
+Windows 0.1.4 adds a managed Hermes ACP adapter with a private profile and typed,
+approved delegation to fresh, read-only Codex or Claude sessions. Optional
+FreeLLMAPI infrastructure uses an explicitly selected Groq or Cerebras account
+and model; it starts disabled, has no provider fallback, and can start at Windows
+sign-in without starting an agent task. Its advertised aggregate free quotas are
+not a guaranteed personal token balance. Provider compatibility and native
+installation checks have their own gates in the
+[Hermes/FreeLLMAPI validation report](docs/VALIDACAO-HERMES-FREELLMAPI-WINDOWS-2026-10-06.md).
+
+Codex and Claude character buttons retain their direct chat channels and share
+personal context with Hermes. They do not all route through the supervisor.
+Hermes learning proposals pass through the Coucou memory policy; native Hermes
+memory/skills tools are disabled in the managed profile. Gemini CLI and
 GitHub Copilot CLI remain available for installation, sign-in and monitoring;
 their chat is unavailable in all modes until inherited hooks and MCP settings
 are isolated and qualified. Choosing a project directory does not enable it.
@@ -153,7 +165,7 @@ The original upstream installer notice concerned an unsigned package and a
 Defender report; its current publication/signing status was not verified for this
 delivery. Local compilation, installation and upstream publication are separate
 steps. See [`windows/README.md`](windows/README.md) and the
-[current validation report](docs/VALIDACAO-AGENTE-PESSOAL-WINDOWS-2026-10-02.md) for
+[current validation report](docs/VALIDACAO-HERMES-FREELLMAPI-WINDOWS-2026-10-06.md) for
 the Windows behavior and evidence.
 
 ### Linux
@@ -186,10 +198,12 @@ open NotchBuddy.xcodeproj   # then ⌘R
 and WebView2. Use the [Portuguese installation guide](README-WINDOWS.md) for the
 complete prerequisites and CLI authentication.
 
-Build from a checkout containing the Windows 0.1.3 implementation:
+Clone the complete branch containing the Windows 0.1.4 implementation. The
+build also uses versioned resources outside the `windows` directory:
 
 ```powershell
-Set-Location -LiteralPath 'D:\coucou\windows'
+git clone --branch codex/multiagent-windows --single-branch https://github.com/OsmarZM/coucou.git coucou
+Set-Location -LiteralPath '.\coucou\windows'
 npm ci
 npm run pack                # installer lands in windows/release/
 ```

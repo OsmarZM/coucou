@@ -9,6 +9,30 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 const MAX_WINDOWS: usize = 32;
 
+/// ACP does not preserve the upstream provider's estimated-usage marker. A
+/// configured context capacity also does not prove a provider measurement.
+pub(crate) fn qualify_supervisor_usage(mut snapshot: Value, free_models: bool) -> Value {
+    let source = if free_models {
+        "Hermes/FreeLLMAPI: contagem possivelmente estimada"
+    } else {
+        "Hermes: origem da contagem não qualificada"
+    };
+    for field in ["tokens", "lastTurnTokens"] {
+        if let Some(value) = snapshot.get_mut(field).and_then(Value::as_object_mut) {
+            value.insert("quality".into(), Value::String("partial".into()));
+            value.insert("source".into(), Value::String(source.into()));
+        }
+    }
+    if let Some(value) = snapshot.get_mut("context").and_then(Value::as_object_mut) {
+        value.insert("quality".into(), Value::String("partial".into()));
+        value.insert(
+            "source".into(),
+            Value::String("Hermes: capacidade configurada; ocupação não qualificada".into()),
+        );
+    }
+    snapshot
+}
+
 pub fn now_seconds() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -576,6 +600,26 @@ pub fn activity(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn supervisor_counts_keep_values_but_never_claim_unqualified_origin_as_observed() {
+        let snapshot = json!({"tokens":{"total":14,"quality":"observed","source":"acp"},"lastTurnTokens":{"total":3,"quality":"observed"},"context":{"used":5,"capacity":32768,"quality":"observed"},"quota":{"availability":"unavailable"}});
+        let free = qualify_supervisor_usage(snapshot.clone(), true);
+        assert_eq!(free["tokens"]["total"], 14);
+        assert_eq!(free["tokens"]["quality"], "partial");
+        assert!(free["tokens"]["source"]
+            .as_str()
+            .unwrap()
+            .contains("possivelmente estimada"));
+        assert_eq!(free["lastTurnTokens"]["quality"], "partial");
+        assert_eq!(free["context"]["quality"], "partial");
+        assert_eq!(free["quota"], snapshot["quota"]);
+        let direct = qualify_supervisor_usage(snapshot, false);
+        assert_eq!(direct["tokens"]["quality"], "partial");
+        let absent = qualify_supervisor_usage(json!({"tokens":null,"context":null}), true);
+        assert!(absent["tokens"].is_null());
+        assert!(absent["context"].is_null());
+    }
 
     #[test]
     fn codex_full_snapshot_removes_buckets_and_does_not_assume_window_lengths() {

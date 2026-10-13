@@ -1,6 +1,7 @@
 //! Local, reference-retained attachments. Parsing happens in a bounded subprocess.
 //! Attachment text is untrusted content; it never grants tool permissions.
 mod extract;
+mod operations;
 mod storage;
 mod worker;
 
@@ -8,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Arc};
 use tokio::sync::{watch, Mutex};
 
+pub use operations::ImportOperations;
 pub use worker::worker_entry;
 
 pub const MAX_FILES: usize = 10;

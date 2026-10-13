@@ -1474,3 +1474,12 @@ input[type="range"]::-webkit-slider-thumb {
 .int-card.detail {
   padding-top: 8px;
 }
+.chat-identity { display:flex; align-items:center; gap:8px; min-width:0; flex:1; color:var(--ink); font-size:11px; }
+.chat-identity b { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.chat-attachment-actions, .up-actions { display:flex; align-items:center; flex-wrap:wrap; gap:6px; }
+.upload-status { min-height:16px; max-height:40px; overflow:auto; color:var(--dim); }
+.up-card.importing .up-fill { animation:import-slide 1.5s ease-in-out infinite alternate; transition:none; }
+@keyframes import-slide { from { transform:translateX(0); } to { transform:translateX(160%); } }
+@media (prefers-reduced-motion:reduce) { .up-card.importing .up-fill { animation:none; } }
+.drop-body { gap:5px; }
+.drop-body .chat-muted { max-width:400px; line-height:1.3; font-size:9px; }

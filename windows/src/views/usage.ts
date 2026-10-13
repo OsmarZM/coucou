@@ -32,5 +32,5 @@ export function usagePanel(conversation: AgentConversation) {
     panel.append(row(tr("usage.version"), usage.sourceVersion || tr("usage.unavailable")), row(tr("usage.captured"), time(usage.capturedAt)));
   } else panel.append(h("div", { class: "chat-muted", text: tr("usage.unavailable") }));
   panel.append(h("p", { class: "chat-muted", text: tr("usage.noGuess") }));
-  return h("details", { class: "chat-usage" }, h("summary", { text: `${tr("usage.title")} · ${observedNumber(usage?.tokens?.total)} ${tr("usage.tokens").toLowerCase()}` }), panel);
+  return h("details", { class: "chat-usage" }, h("summary", { text: `${tr("usage.title")} · ${observedNumber(usage?.tokens?.total)} ${tr("usage.tokens").toLowerCase()}${usage?.tokens?.quality === "partial" ? ` · ${tr("usage.partial")}` : ""}` }), panel);
 }

@@ -11,12 +11,13 @@ const event = (sessionId, changes = {}) => ({
 test("agent groups stay visible independently of the four-service limit", () => {
   const state = new AppState();
   state.loadIntegrationTasks();
-  assert.equal(state.tasks.length, 8);
+  assert.equal(state.tasks.length, 9);
+  assert.ok(state.tasks.some(task => task.id === "hermes"));
   assert.ok(AGENT_IDS.every((agent) => state.tasks.some((task) => task.id === AGENT_META[agent].taskId)));
   state.toggleIntegration("integration_notion");
   assert.equal(state.settings.activeIntegrations.length, 4);
   state.toggleIntegration("integration_codex");
-  assert.equal(state.tasks.length, 8);
+  assert.equal(state.tasks.length, 9);
 });
 
 test("new sessions never steal selection and each selection shows its own state", () => {
@@ -43,7 +44,7 @@ test("loading service preferences preserves selected agent sessions", () => {
   state.toggleIntegration("integration_resend");
   assert.equal(state.focusTask.sessionId, "claude-session");
   assert.equal(state.focusTask.state, "working");
-  assert.equal(state.tasks.length, 7);
+  assert.equal(state.tasks.length, 8);
   assert.ok(state.tasks.find((task) => task.id === "integration_codex"));
 });
 

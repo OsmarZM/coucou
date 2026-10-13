@@ -7,15 +7,14 @@ import { h, svg, clear, dot } from "./dom";
 import { ICONS } from "./icons";
 import { Ticker } from "./ticker";
 import { State, type AgentTask } from "../core/state";
-import { AGENT_META, agentForTask } from "../core/sessions";
+import { AGENT_META, agentForTask, chatAgentForTask } from "../core/sessions";
 import { washRGBA, type IslandViewName, type Wash } from "../core/layout";
 import { createMiniBot, pruneMiniBots } from "../mochi/minibots";
 import { buildPrompt } from "./chat";
 import { buildLearned } from "./learned";
-import { AgentChat, denyAgentChatApproval } from "../core/agent-chat";
+import { AgentChat, agentDisplayName, denyAgentChatApproval } from "../core/agent-chat";
 import { aggregateAgentMetrics, type AgentMetrics } from "../core/agent-metrics";
 import { agentMetricsBadge, agentMetricsPanel } from "./agent-metrics";
-import { AGENT_IDS, type AgentId } from "../core/sessions";
 import { buildChoose, buildUpload, buildUploading } from "./upload";
 import { renderIntegrationCard, type IntegrationCardHooks } from "./integrations";
 
@@ -33,6 +32,7 @@ export interface ViewActions {
   setVolume(v: number): void;
   setAutoClose(seconds: number): void;
   openSettingsWindow(): void;
+  chooseFiles(): void;
   blip(): void;
 }
 
@@ -78,7 +78,7 @@ function agentWho(task: AgentTask | null, label: string): HTMLElement {
 }
 
 function agentName(task: AgentTask | null): string {
-  const agent = task ? agentForTask(task.id) : null;
+  const agent = task ? chatAgentForTask(task.id) : null;
   return agent ? AGENT_META[agent].name : task?.name || tr("Agent");
 }
 
@@ -206,8 +206,9 @@ function buildOverview(actions: ViewActions): ViewHost {
         lastStep = "";
       }
 
-      const agent = task ? agentForTask(task.id) : null;
-      const sessionActive = agent != null && task?.sessionKey != null;
+      const agent = task ? chatAgentForTask(task.id) : null;
+      const hookAgent = task ? agentForTask(task.id) : null;
+      const sessionActive = hookAgent != null && task?.sessionKey != null;
 
       if (task && sessionActive) {
         if (mode !== "ticker") {
@@ -224,7 +225,7 @@ function buildOverview(actions: ViewActions): ViewHost {
         const badge = agentMetricsBadge(metrics[agent!]);
         if (badge) who.append(badge);
         who.append(h("button", { class: "metrics-open", title: tr("usage.title"), "aria-label": tr("usage.title"), text: "…", onclick: () => actions.setView("activity") }));
-        const sessions = State.sessions.list(agent!);
+        const sessions = State.sessions.list(hookAgent!);
         const optionsKey = sessions.map((session) => `${session.key}:${session.state}:${session.projectName}`).join("|");
         if (optionsKey !== sessionOptionsKey && document.activeElement !== selector) {
           sessionOptionsKey = optionsKey;
@@ -247,7 +248,7 @@ function buildOverview(actions: ViewActions): ViewHost {
       } else if (task && agent) {
         const metric = metrics[agent];
         const availability = AgentChat.statuses.find((entry) => entry.agent === agent);
-        const key = JSON.stringify([task.id, metric.badge, metric.awaitingApproval, availability?.available, availability?.detail]);
+        const key = JSON.stringify([task.id, task.name, task.color, metric.badge, metric.awaitingApproval, availability?.available, availability?.detail]);
         if (cardKey !== key) {
           cardKey = key; mode = "card"; clear(leftBody);
           const badge = agentMetricsBadge(metric);
@@ -279,13 +280,13 @@ function buildOverview(actions: ViewActions): ViewHost {
 
       const others = State.otherTasks;
       const pillKey = others.map((t) => {
-        const agent = agentForTask(t.id);
-        return `${t.id}:${t.pillBadge ?? ""}:${agent ? metrics[agent].badge : ""}:${agent ? metrics[agent].awaitingApproval : ""}`;
+        const agent = chatAgentForTask(t.id);
+        return `${t.id}:${t.name}:${t.color}:${t.pillBadge ?? ""}:${agent ? metrics[agent].badge : ""}:${agent ? metrics[agent].awaitingApproval : ""}`;
       }).join("|");
       if (pillKey !== pillIds) {
         pillIds = pillKey;
         clear(pills);
-        for (const t of others) pills.append(buildPill(t, actions, agentForTask(t.id) ? metrics[agentForTask(t.id)!] : undefined));
+        for (const t of others) pills.append(buildPill(t, actions, chatAgentForTask(t.id) ? metrics[chatAgentForTask(t.id)!] : undefined));
         pruneMiniBots();
       }
     },
@@ -293,7 +294,7 @@ function buildOverview(actions: ViewActions): ViewHost {
 }
 
 function buildPill(task: AgentTask, actions: ViewActions, metrics?: AgentMetrics): HTMLElement {
-  const agent = agentForTask(task.id);
+  const agent = chatAgentForTask(task.id);
   const label = task.name;
   const canvas = createMiniBot(task, 20);
   const pill = h(
@@ -332,17 +333,14 @@ function buildPill(task: AgentTask, actions: ViewActions, metrics?: AgentMetrics
 }
 
 function buildActivity(actions: ViewActions): ViewHost {
-  const provider = h("select", { class: "chat-select", "aria-label": tr("chat.provider") });
-  for (const agent of AGENT_IDS) provider.append(h("option", { value: agent, text: AGENT_META[agent].name }));
+  const identity = h("b", { class: "chat-identity" });
   const content = h("div", { class: "learned-list" });
-  const el = h("div", { class: "view" }, card("indigo", h("div", { class: "chat-body" }, h("div", { class: "chat-controls" }, provider, h("button", { class: "chat-action", text: tr("overview.back"), onclick: () => actions.setView("overview") })), content)));
-  let chosen: AgentId = "codex", previousFocus: string | null = null, key = "";
-  provider.addEventListener("change", () => { chosen = provider.value as AgentId; key = ""; State.notify(); });
+  const el = h("div", { class: "view" }, card("indigo", h("div", { class: "chat-body" }, h("div", { class: "chat-controls" }, identity, h("button", { class: "chat-action", text: tr("overview.back"), onclick: () => actions.setView("overview") })), content)));
+  let key = "";
   function refresh() {
     if (State.view !== "activity") return;
-    const focus = State.focusId;
-    if (focus !== previousFocus) { previousFocus = focus; chosen = agentForTask(focus ?? "") ?? chosen; key = ""; }
-    provider.value = chosen;
+    const chosen = chatAgentForTask(State.focusId ?? "") ?? (AgentChat.provider === "anthropic" ? "codex" : AgentChat.provider);
+    identity.textContent = `${agentDisplayName(chosen)} · ${tr("usage.title")}`;
     const metric = aggregateAgentMetrics(AgentChat.conversations, State.sessions.list(), Math.floor(Date.now() / 1000))[chosen];
     const nextKey = JSON.stringify(metric);
     if (key === nextKey) return;
@@ -598,8 +596,8 @@ export function buildViews(
   map.set("prompt", buildPrompt(onChatHeightChange, () => actions.setView("learned")));
   map.set("learned", buildLearned(actions));
   map.set("activity", buildActivity(actions));
-  map.set("upload", buildUpload());
-  map.set("uploading", buildUploading());
+  map.set("upload", buildUpload(actions));
+  map.set("uploading", buildUploading(actions));
   map.set("choose", buildChoose(actions));
   // Not in the Windows v1: sending a file by email, window attach + web result.
   map.set("mail", buildPlaceholder(tr("Sending by email isn't in this version."), ""));

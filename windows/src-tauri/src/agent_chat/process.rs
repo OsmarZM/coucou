@@ -171,7 +171,7 @@ impl Drop for Job {
     }
 }
 impl Job {
-    fn new() -> Result<Self, String> {
+    pub(crate) fn new() -> Result<Self, String> {
         unsafe {
             let handle =
                 CreateJobObjectW(None, None).map_err(|_| "Cannot create a CLI process job.")?;
@@ -188,7 +188,7 @@ impl Job {
             Ok(job)
         }
     }
-    fn attach_and_resume(&self, pid: u32) -> Result<(), String> {
+    pub(crate) fn attach_and_resume(&self, pid: u32) -> Result<(), String> {
         unsafe {
             let process = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, false, pid)
                 .map_err(|_| "Cannot open the suspended CLI.")?;
@@ -245,8 +245,19 @@ impl Job {
 }
 
 pub fn spawn(executable: &Executable, args: &[String], cwd: &Path) -> Result<(Child, Job), String> {
+    spawn_with_environment(executable, args, cwd, None)
+}
+pub(crate) fn spawn_with_environment(
+    executable: &Executable,
+    args: &[String],
+    cwd: &Path,
+    environment: Option<&std::collections::BTreeMap<String, String>>,
+) -> Result<(Child, Job), String> {
     let job = Job::new()?;
     let mut command = AsyncCommand::new(&executable.program);
+    if let Some(environment) = environment {
+        command.env_clear().envs(environment);
+    }
     command
         .args(&executable.prefix)
         .args(args)

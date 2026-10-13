@@ -3,7 +3,7 @@
 
 import { Tracked, Spring, clamp } from "../core/anim";
 import { Bridge, IS_TAURI, onDragDrop } from "../core/bridge";
-import { ensureAttachmentConversation, ingestConversationAttachments } from "../core/attachments";
+import { Attachments, attachmentScopeBusy, ensureAttachmentConversation, ingestConversationAttachments } from "../core/attachments";
 import { chatDiagnostic } from "../core/agent-chat";
 import {
   EXPANDED_CORNER, EXPANDED_W, NOTCH_W, PANEL_H, PANEL_W,
@@ -93,10 +93,6 @@ export class Island {
   private prevViewBeforeConfused: IslandViewName = "overview";
   private lastSyncedView: IslandViewName | null = null;
 
-  /** Drop sequence bookkeeping: last tick played, and whether the ✓ has fired. */
-  private uploadTens = 0;
-  private uploadDone = false;
-
   constructor(root: HTMLElement) {
     this.root = root;
     this.build();
@@ -116,6 +112,7 @@ export class Island {
   private build() {
     const actions: ViewActions = {
       setView: (v) => this.setView(v),
+      chooseFiles: () => { void this.chooseFiles(); },
       collapse: () => this.collapse(),
       togglePin: () => {
         State.settings.userPinned = !State.settings.userPinned;
@@ -381,7 +378,8 @@ export class Island {
       active.matches("input, textarea, select, [contenteditable='true']");
     this.fsm.setRetention("focus", this.windowFocused && editing);
     const drafts = this.islandEl.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(".chat-input, [data-chat-draft]");
-    this.fsm.setRetention("draft", [...drafts].some((field) => (field.value ?? field.textContent ?? "").trim().length > 0));
+    this.fsm.setRetention("draft", [...drafts].some((field) => (field.value ?? field.textContent ?? "").trim().length > 0) ||
+      (State.view === "uploading" && ["failed", "cancelled"].includes(Attachments.lastImport?.status ?? "")));
     const selection = document.getSelection();
     this.fsm.setRetention("selection", Boolean(selection && !selection.isCollapsed &&
       selection.anchorNode && this.islandEl.contains(selection.anchorNode)));
@@ -423,6 +421,7 @@ export class Island {
   private onDragDrop(e: { type: string; paths?: string[] }) {
     if (e.type !== "over") void Bridge.log(`drag ${e.type} ${e.paths?.length ?? 0} file(s)`);
     if (State.paused) return;
+    if (State.attachmentBusy && (e.type === "enter" || e.type === "over")) return;
     switch (e.type) {
       case "enter":
       case "over": {
@@ -452,90 +451,64 @@ export class Island {
           this.setView(State.defaultView());
           return;
         }
-        this.swallow(paths);
+        void this.swallow(paths);
         break;
       }
     }
   }
 
-  /**
-   * Mochi eats the file. Nothing here waits on the file system: the copy into
-   * the inbox runs in the background and swaps the path in when it lands, so a
-   * slow disk can never stall the animation — same as FileDropHandler on macOS.
-   */
-  private swallow(paths: string[]) {
+  private async chooseFiles() {
+    if (State.paused || State.attachmentBusy) return;
+    try {
+      // Capture the channel before opening the native picker.
+      const conversation = ensureAttachmentConversation();
+      const paths = await Bridge.documentsChoose();
+      if (paths.length) await this.swallow(paths, conversation.id);
+    } catch (error) { State.noteMessage = chatDiagnostic(error); this.setView("note"); Sound.play("error"); }
+  }
+
+  /** The animation accompanies the copy; only its result confirms an import. */
+  private async swallow(paths: string[], capturedConversationId?: string) {
+    let conversationId: string;
+    try { conversationId = capturedConversationId ?? ensureAttachmentConversation().id; }
+    catch (error) { UploadSeq.deactivate(); State.noteMessage = chatDiagnostic(error); this.setView("note"); Sound.play("error"); return; }
+    if (State.attachmentBusy) { Attachments.reportError(conversationId, "Já existe uma importação em andamento. Aguarde ou cancele antes de anexar novamente."); this.setView("prompt"); return; }
+    if (attachmentScopeBusy(conversationId) || !paths.length || paths.length > 10) {
+      Attachments.reportError(conversationId, attachmentScopeBusy(conversationId) ? "Há uma execução usando este contexto. Aguarde ou cancele antes de anexar arquivos." : "Escolha de 1 a 10 arquivos por importação.");
+      UploadSeq.deactivate(); this.setView("prompt"); Sound.play("error"); return;
+    }
     const path = paths[0];
     const name = path.split(/[\\/]/).pop() || "file";
-    State.droppedFile = { name, path };
-    State.promptContext = { kind: "file", name, path };
-
+    State.droppedFile = null;
+    State.promptContext = null;
     UploadSeq.performDrop(State.uploadDuration);
-    this.uploadTens = 0;
-    this.uploadDone = false;
-
     this.engine.gulp();
-    Sound.play("approve");
-    this.engine.triggerEmote("happy");
     this.engine.animateMorph(0);
-
     State.uploadProgress = 0;
     this.setView("uploading");
     this.ensureRunning();
 
     this.pendingFileCopies++;
     this.syncInteractionRetention();
-    const importing = AgentChat.provider === "anthropic" ? Bridge.ingestFile(path).then((file) => {
-      State.droppedFile = { name: file.name, path: file.path };
-      State.promptContext = { kind: "file", name: file.name, path: file.path };
-    }) : Promise.resolve().then(() => {
-      const conversation = ensureAttachmentConversation();
-      // This ID is captured once; a later navigation never redirects the files.
-      return ingestConversationAttachments(conversation.id, paths);
-    });
-    void importing
-      .then((file) => {
-        void file;
-        State.notify();
-      })
-      .catch((err) => {
-        UploadSeq.deactivate();
-        State.noteMessage = chatDiagnostic(err);
-        this.engine.animateMorph(0);
-        this.setView("note");
-        Sound.play("error");
-        window.setTimeout(() => this.setView(State.defaultView()), 2400);
-      })
-      .finally(() => {
-        this.pendingFileCopies = Math.max(0, this.pendingFileCopies - 1);
-        State.notify();
-      });
+    try {
+      await ingestConversationAttachments(conversationId, paths);
+      State.droppedFile = { name, path }; State.uploadProgress = 1;
+      Sound.play("approve"); this.engine.triggerEmote("happy");
+      // Navigation while copying must not be replaced by a late result.
+      if (State.view === "uploading") this.setView("choose");
+    } catch (error) {
+      Attachments.reportError(conversationId, error); Sound.play("error");
+      // Keep the failure and actions on screen; no timed dismissal.
+    } finally {
+      UploadSeq.deactivate(); this.engine.animateMorph(0);
+      this.pendingFileCopies = Math.max(0, this.pendingFileCopies - 1); State.notify();
+    }
   }
 
-  /**
-   * Sounds and view changes hung off the canvas timeline: a `tick` every 10 %,
-   * the ✓ chime when the bar completes, then `choose` once Mochi has grown back.
-   */
+  /** Stop the decorative entrance before it can draw a timed success bar. */
   private stepSequence() {
     const since = UploadSeq.sinceDrop();
-    if (since == null) return;
-    const dur = State.uploadDuration;
-    const p = Math.max(0, Math.min(1, (since - PRE_PROGRESS) / dur));
-
-    const tens = Math.floor(p * 10);
-    if (tens > this.uploadTens && tens < 10) {
-      this.uploadTens = tens;
-      Sound.play("tick");
-    }
-
-    if (!this.uploadDone && since >= PRE_PROGRESS + dur) {
-      this.uploadDone = true;
-      Sound.play("approve");
-      this.engine.triggerEmote("happy");
-    }
-    // The extra second is the grow-back, after which the choose card is up.
-    if (since >= PRE_PROGRESS + dur + 1 && State.view === "uploading") {
-      this.setView("choose");
-    }
+    if (since != null && since >= PRE_PROGRESS) UploadSeq.deactivate();
   }
 
   // ── Geometry ────────────────────────────────────────────────────────────────
@@ -813,6 +786,7 @@ export class Island {
       this.drawBot(dt);
     }
 
+    if (UploadSeq.isActive) this.stepSequence();
     const uploadActive = this.uploadActive;
     if (uploadActive) this.uploadCanvas.draw(UploadSeq.frame(), nowMs / 1000);
     this.uploadCanvas.el.classList.toggle("on", uploadActive);
@@ -820,7 +794,6 @@ export class Island {
 
     tickMiniBots(dt);
     this.views.get(State.view)?.tick?.(nowMs);
-    if (UploadSeq.isActive) this.stepSequence();
     this.updateCountdown(nowMs);
 
     // Nothing is drawn while the island is hidden, so nothing may keep the loop

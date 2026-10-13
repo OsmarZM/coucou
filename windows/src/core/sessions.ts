@@ -8,6 +8,7 @@ export const AGENT_META = {
   codex: { taskId: "integration_codex", name: "Codex", color: "#10A37F", source: "codex" },
   gemini: { taskId: "integration_gemini", name: "Gemini", color: "#6C9AFF", source: "gemini" },
   copilot: { taskId: "integration_copilot", name: "GitHub Copilot", color: "#B898FF", source: "copilot" },
+  hermes: { taskId: "hermes", name: "Hermes", color: "#F6AD55", source: "hermes" },
 } as const;
 
 const EVENT_TYPES = [
@@ -57,6 +58,10 @@ export function sessionKey(agent: AgentId, sessionId: string): string {
 
 export function agentForTask(id: string): AgentId | null {
   return AGENT_IDS.find((agent) => AGENT_META[agent].taskId === id) ?? null;
+}
+/** UI profiles include Hermes; the external hook protocol still accepts four CLIs only. */
+export function chatAgentForTask(id: string): AgentId | "hermes" | null {
+  return id === "hermes" ? "hermes" : agentForTask(id);
 }
 
 export function projectName(cwd: string): string {

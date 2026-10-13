@@ -31,7 +31,8 @@ export function agentMetricsPanel(metrics: AgentMetrics): HTMLDetailsElement {
   );
   for (const [index, conversation] of metrics.tokens.conversations.entries()) {
     const scope = conversation.scope === "conversation" ? "Conversa" : conversation.scope === "model_call" ? "Última chamada" : conversation.scope === "turn" ? "Último turno" : "Uso indisponível";
-    panel.append(row(`${scope} ${index + 1}`, number(conversation.total)), row("Captura", date(conversation.capturedAt)));
+    panel.append(row(`${scope} ${index + 1}`, number(conversation.total)), row("Origem", conversation.source ?? "Indisponível"), row("Captura", date(conversation.capturedAt)));
+    if (conversation.quality === "partial") panel.append(h("p", { class: "chat-muted", text: tr("usage.partial") }));
   }
   panel.append(h("strong", { text: "Cota da conta" }));
   const quota = metrics.quota;
