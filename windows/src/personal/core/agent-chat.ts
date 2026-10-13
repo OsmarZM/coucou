@@ -39,7 +39,7 @@ const AGENTS: ChatAgent[] = ["codex", "claude", "gemini", "copilot", "hermes", "
 let hermesName = "Hermes";
 export function setHermesDisplayName(name: string) { hermesName = name.trim().slice(0, 64) || "Hermes"; }
 export function agentDisplayName(agent: ChatAgent | string): string {
-  return ({ codex: "Codex", claude: "Claude", gemini: "Gemini", copilot: "GitHub Copilot", api: "Coucou", hermes: hermesName, anthropic: "Anthropic" } as Record<string,string>)[agent] ?? agent;
+  return ({ codex: "Codex", claude: "Claude", gemini: "Gemini", copilot: "GitHub Copilot", api: "Automático", hermes: hermesName, anthropic: "Anthropic" } as Record<string,string>)[agent] ?? agent;
 }
 const STORAGE_KEY = "coucou.cli-chat.metadata.v1";
 const MAX_CONVERSATIONS = 16;

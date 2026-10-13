@@ -352,29 +352,41 @@ function buildProviderPrompt(onHeightChange: () => void): ViewHost {
   };
 }
 
-/** Personal agent is an opt-in mode; the official provider chat remains intact. */
-export function buildPrompt(onHeightChange:()=>void):ViewHost {
- const provider=buildProviderPrompt(onHeightChange);
- let agent:ReturnType<typeof buildPersonalAgent>|null=null;
- const agentPanel=h("div",{class:"chat-panel agent-panel"});
- provider.el.classList.remove("view"); provider.el.classList.add("chat-panel");
- const modes=h("div",{class:"picker-chips chat-modes"});
- let local=false; let userSelected=false;
- const api=h("button",{class:"tab on",text:t("Chat"),title:"Conversa com o provedor. Para ferramentas e anexos compartilhados, selecione Agente local."});
- const personal=h("button",{class:"tab",text:"Agente local"});
- const el=h("div",{class:"view chat-shell"},modes,provider.el,agentPanel);
- function select(value:boolean) {
-  if(value && !State.agentRuntimeAvailable) return;
-  local=value;
-  if(local && !agent) { agent=buildPersonalAgent(onHeightChange); agentPanel.append(agent.el); }
-  api.classList.toggle("on",!local); personal.classList.toggle("on",local);
-  provider.el.hidden=local; agentPanel.hidden=!local; agent?.setActive(local); onHeightChange();
- }
- api.addEventListener("click",()=>{userSelected=true;select(false);}); personal.addEventListener("click",()=>{userSelected=true;select(true);});
- modes.append(api,personal); select(false);
- return {el,sync(){
-  personal.hidden=!State.agentRuntimeAvailable;
-  if(!userSelected && !local && State.agentRuntimeAvailable && State.view === "prompt") select(true);
-  provider.sync(); agent?.sync();
- },focus(){ (local?agent:provider)?.focus?.(); }};
+/** One chat surface. Windows adds tools to the same conversation UI; other platforms keep provider chat. */
+export function buildPrompt(onHeightChange: () => void): ViewHost {
+  const panel = h("div", {class: "chat-panel"});
+  const el = h("div", {class: "view chat-shell"}, panel);
+  let provider: ViewHost | null = null;
+  let agent: ReturnType<typeof buildPersonalAgent> | null = null;
+  let showingAgent = false;
+
+  function syncHost() {
+    const useAgent = State.agentRuntimeAvailable;
+    // The chat is constructed before boot. Do not initialize the personal runtime until its availability is known.
+    if (useAgent) {
+      if (!agent) {
+        agent = buildPersonalAgent(onHeightChange);
+        panel.replaceChildren(agent.el);
+        agent.setActive(true);
+      } else if (!showingAgent) {
+        panel.replaceChildren(agent.el);
+        agent.setActive(true);
+      }
+      showingAgent = true;
+      agent.sync();
+    } else {
+      if (!provider) {
+        provider = buildProviderPrompt(onHeightChange);
+        provider.el.classList.remove("view");
+        provider.el.style.height = "100%";
+      }
+      if (showingAgent || !panel.firstChild) {
+        agent?.setActive(false);
+        panel.replaceChildren(provider.el);
+      }
+      showingAgent = false;
+      provider.sync();
+    }
+  }
+  return {el, sync: syncHost, focus() { (showingAgent ? agent : provider)?.focus?.(); }};
 }

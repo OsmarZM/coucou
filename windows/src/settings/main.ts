@@ -1,3 +1,4 @@
+import {buildChatConnectionSection} from "./chat-connection";
 import { buildHermesSection } from "./hermes";
 import { buildManagedModelsSection } from "./managed-models";
 // Settings window — the place where anything that writes to disk is confirmed.
@@ -1366,7 +1367,7 @@ async function render() {
   root.append(
     h("h1", {}, h("span", { text: "Coucou" }), h("span", { class: "version", text: version })),
     h("section", {}, h("h2", {text:"Chat e agente pessoal"}),
-      h("div", {class:"hint",text:"Agente local → Coucou usa o provedor e o modelo escolhidos em Provedores do chat ou Modelos locais. As mesmas chaves do cofre são usadas; não é necessário instalar Hermes. O modelo precisa aceitar chamadas de ferramentas."}),
+      h("div", {class:"hint",text:"O chat fica em Automático e usa o provedor e o modelo escolhidos em Provedores do chat ou Modelos locais. As mesmas chaves do cofre são usadas; não é necessário instalar Hermes. O modelo precisa aceitar chamadas de ferramentas."}),
       h("div", {class:"hint",text:"Hermes/FreeLLMAPI e as CLIs são motores opcionais. A instalação de hooks serve ao monitoramento e não configura o provedor do chat. Sem fallback automático para outra conta ou modelo."}),
       h("div", {class:"hint",text:"Arquivos anexados são preparados localmente e os trechos selecionados são enviados ao provedor ativo ao enviar sua pergunta. Ler outras pastas exige sua confirmação. PDFs digitalizados ainda precisam de OCR externo."}),
       h("div", {class:"hint",text:"Celular: use a seção de vínculo com Android abaixo. E-mail: o leitor Apple Mail do Coucou oficial é exclusivo do macOS; no Windows a integração Resend não é uma caixa de entrada nem habilita envio de anexos."})),
@@ -1374,6 +1375,7 @@ async function render() {
     agentsSection(agents),
     planSection(status),
     apiSection(hasKey),
+    buildChatConnectionSection(()=>settings,(next)=>{settings=next;}),
     chatProvidersSection(chatKeys, keyChanged),
     localSection(customKey),
     ...agentSections,

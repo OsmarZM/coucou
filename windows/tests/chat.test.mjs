@@ -8,6 +8,7 @@ import { installFakeDom } from "./fakedom.mjs";
 import { calls, emit, internals, sent } from "./tauri.mjs";
 
 installFakeDom();
+window.__TAURI_EVENT_PLUGIN_INTERNALS__={unregisterListener(){}};
 const { buildPrompt } = await import("../src/views/chat.ts");
 const { DEFAULT_SETTINGS, State } = await import("../src/core/state.ts");
 
@@ -31,6 +32,7 @@ beforeEach(() => {
   State.stateOverride = null;
   State.view = "prompt";
   State.droppedFile = null;
+  State.agentRuntimeAvailable = false;
   view = buildPrompt(() => {});
   view.sync();
 });
@@ -39,20 +41,18 @@ const $ = (cls) => view.el.querySelector(cls);
 const chips = () => view.el.find(".picker-chip").map((c) => c.textContent);
 const models = () => view.el.find(".picker-model").map((m) => m.textContent);
 
-test("official chat stays lazy and unsupported platforms cannot open the local runtime",()=>{
+test("unified chat keeps the provider surface on platforms without the local runtime",()=>{
   State.agentRuntimeAvailable=false;
-  const button=view.el.find(".tab").find(b=>b.textContent==="Agente local");
-  button.fire("click");
+  view.sync();
   assert.equal(view.el.querySelector(".personal-runtime"),null);
   assert.deepEqual(sent("agent_chat_status"),[]);
   assert.deepEqual(sent("agent_chat_start"),[]);
 });
 
-test("opening the local mode preserves the official provider and never starts a task",async()=>{
+test("unified chat adopts tools at boot without changing the provider or starting a task",async()=>{
   State.agentRuntimeAvailable=true;
   State.settings={...State.settings,chatProvider:"google",screen:"at:1920,0"};
-  const button=view.el.find(".tab").find(b=>b.textContent==="Agente local");
-  button.fire("click");await flush();
+  view.sync();await flush();
   assert.ok(view.el.querySelector(".personal-runtime"));
   assert.equal(State.settings.chatProvider,"google");
   assert.equal(State.settings.screen,"at:1920,0");

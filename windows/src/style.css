@@ -2629,22 +2629,12 @@ html[data-dir="rtl"] #views :is(.bubble, .reply .md-p, .reply .md-h, .reply .md-
   text-align: start;
 }
 
-/* Chat mode wrappers must fill the island; icon tabs are not text-sized tabs. */
+/* The unified chat fills the island. */
 .chat-shell { display:flex; flex-direction:column; gap:6px; min-height:0; }
-.chat-modes { flex:0 0 auto; align-items:center; }
-.chat-modes .tab { width:auto; min-width:64px; height:26px; padding:3px 10px; white-space:nowrap; font:500 11px var(--font); }
 .chat-panel { flex:1 1 auto; min-height:0; height:100%; }
 .chat-panel[hidden], .personal-runtime [hidden] { display:none !important; }
 .personal-runtime { display:flex; flex-direction:column; height:100%; min-height:0; gap:5px; }
 .personal-runtime > .chat-card, .personal-runtime > div:last-child { flex:1 1 auto; min-height:0; }
 .personal-runtime > div:has(> .chat-card) { flex:1 1 auto; min-height:0; }
 .personal-runtime .chat-card { height:100%; }
-.personal-runtime > .picker-chips { flex:0 0 auto; flex-wrap:nowrap; overflow-x:auto; }
-.personal-runtime > .picker-chips .picker-chip { flex:0 0 auto; }
-.agent-provider-controls { flex:0 0 auto; min-height:0; }
-.agent-provider-controls.picking .picker { display:flex; height:150px; overflow-y:auto; }
-.agent-provider-controls .agent-model-button { font-size:10px; max-width:100%; }
 /* Give the model picker the available panel rather than clipping the editor beneath it. */
-.agent-provider-controls.picking { flex:1 1 auto; display:flex; flex-direction:column; overflow:hidden; }
-.agent-provider-controls.picking .picker { flex:1 1 auto; min-height:0; height:auto; }
-.personal-runtime:has(.agent-provider-controls.picking) > div:has(> .chat-card) { display:none; }

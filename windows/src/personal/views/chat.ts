@@ -168,7 +168,7 @@ export function buildPrompt(onHeightChange: () => void, openLearned: () => void 
       identityKey = nextIdentityKey; clear(identity);
       const meta = cli ? AGENT_META[AgentChat.provider as keyof typeof AGENT_META] : null;
       const task = meta ? State.tasks.find((entry) => entry.id === meta.taskId) : null;
-      identity.append(task ? createMiniBot(task, 20) : h("span", { text: activeName[0] }), h("b", { text: activeName }), h("span", { class: "chat-muted", text: "Agente escolhido na guia principal" }));
+      identity.append(task ? createMiniBot(task, 20) : h("span", { text: activeName[0] }), h("b", { text: activeName }), h("span", { class: "chat-muted", text: "Conversa e ferramentas no mesmo chat" }));
     }
     newButton.disabled = apiSending || !cli; newButton.hidden = !cli; refresh.hidden = !cli;
     advanced.hidden = !!conversation?.approval; chipRow.hidden = !!conversation?.approval; footer.hidden = !!conversation?.approval;
