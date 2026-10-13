@@ -19,4 +19,8 @@ Remover a separação entre Chat e Agente local e centralizar a escolha de conex
 
 Preview Edge com componentes e CSS reais em `windows/output/playwright/chat-auto.png`: sem abas e seletores, editor e Contexto preservados. É uma fixture visual, não uma captura nativa nem comprovação de fornecedor remoto. O backend funcional não foi alterado; apenas versões Rust/Tauri foram alinhadas à entrega. O build de produção recompila e verifica a integração.
 
-Empacotamento, instalação e backup serão registrados na conclusão. Logs em `windows/target/chat-auto-*` e `windows/target/unified-chat-*`. Versão de aplicativo 0.4.0-agent.3; versão MSI 0.4.0.3.
+Empacotamento NSIS e MSI concluído. A instalação em `D:/Nova pasta/Coucou/coucou.exe` foi atualizada para 0.4.0-agent.3 e reaberta; processo respondendo. O executável foi comparado integralmente à build gerada (diferença somente da marca NSIS do Tauri). O hash de settings.json ficou idêntico ao backup antes da abertura. Logs em `windows/target/chat-auto-*` e `windows/target/unified-chat-*`. Versão de aplicativo 0.4.0-agent.3; versão MSI 0.4.0.3.
+
+Backup antes da instalação: `C:\Users\FortaTech\AppData\Local\Coucou-update-backups\before-auto-chat-agent3-20261013-175453`.
+
+NSIS SHA256: `a45ff7ac0bb992119ec2d5f03c6a9f15824b64d1940e1b59c093a2b1e6d89cc9`. MSI SHA256: `469d2d488342ef92e47032c75ea318b6c319e406c96d9ce77be7e715083b3426`.
