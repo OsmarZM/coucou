@@ -3,12 +3,11 @@
 // `npm run dev` alone.
 
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { emitTo, listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { Settings } from "./state";
-import type { RuntimeToolSpec } from "./agent-runtime";
-import type { Attachment, DocumentChunk, PreparedDocuments } from "./document-types";
-import type { MemoryPreferences, MemoryQuery, MemoryCandidate, MemoryRecord, SkillCandidate, SkillRecord, SkillDiff, SkillExport, SessionRecord, StoredMessage, SessionSearchHit } from "./personal-types";
+import type { RecapHistory, RecapPrefs } from "../recap/summary";
+import type { SpotifyState } from "./spotify";
 
 export const IS_TAURI =
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -24,6 +23,7 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T |
 }
 
 export interface BootInfo {
+  agentRuntimeAvailable: boolean;
   settings: Settings;
   /** Logical screen rect of the monitor the island lives on. */
   screen: { x: number; y: number; width: number; height: number; scale: number };
@@ -33,8 +33,156 @@ export interface BootInfo {
   cursorPoll: boolean;
 }
 
+/** The phone link (src-tauri/src/phone_link): how it is, never its secrets. */
+export interface PhoneLinkStatus {
+  enabled: boolean;
+  running: boolean;
+  port: number;
+  host: string;
+  name: string;
+  clients: number;
+  error: string | null;
+  /** The relay connection ("Away from home Wi-Fi"). */
+  relayState: PhoneRelayState;
+}
+
+export type PhoneRelayState = "off" | "connecting" | "waiting" | "linked" | "accessRefused" | "unreachable" | "roomTaken" | "tooMany";
+
+/** The relay switch and address. The access key is write-only: only whether one is stored comes back. */
+export interface PhoneRelayStatus {
+  enabled: boolean;
+  url: string;
+  hasAccess: boolean;
+  state: PhoneRelayState;
+}
+
+/** Session details for the phone: the switch (off by default). */
+export interface PhoneDetailsStatus {
+  enabled: boolean;
+}
+
+/** Chat from the phone: the switch and the models the phone may use ("provider/model"). */
+export interface PhoneChatStatus {
+  enabled: boolean;
+  models: string[];
+}
+
+/** What the settings window shows to pair a phone. Only the settings window may ask. */
+export interface PhoneLinkPairing {
+  link: string;
+  qrSvg: string;
+  host: string;
+  port: number;
+  name: string;
+  /** The relay's host when this link also carries the relay fields. */
+  relay: string | null;
+}
+
+/** One session as the phone sees it; Rust stamps `updatedAt`. */
+export interface PhoneLinkSession {
+  pillId: string;
+  agent: string;
+  state: string;
+  statusText: string;
+  stepIndex: number;
+  stepCount: number;
+  /** Details, for a phone that has the capability (the user's switch). */
+  steps?: string[];
+  finalLine?: string;
+  /** A folder name, never a path. */
+  project?: string;
+  color?: string;
+  /** The files this session changed, for a phone that has `diffs` (Rust cuts them to a name and a count). */
+  files?: PhoneLinkFile[];
+}
+
+export interface PhoneLinkFile {
+  id: number;
+  /** A file name; Rust keeps only its last segment. */
+  name: string;
+  added: number;
+  removed: number;
+  tooLarge?: boolean;
+  isNew?: boolean;
+}
+
+/** One file's diff for the phone that asked: lines as [kind, text], kind "+", "-", " " or "@" (a hunk's first line). */
+export interface PhoneLinkDiff {
+  pillId: string;
+  fileId: number;
+  name: string;
+  added: number;
+  removed: number;
+  tooLarge: boolean;
+  gone: boolean;
+  lines: [string, string][];
+}
+
+/** One plan window for the phone: used percentage (as the island has it) and when it resets (epoch ms). */
+export interface PhoneLinkWindow {
+  usedPct: number;
+  resetsAt: number;
+}
+
+export interface PhoneLinkPlan {
+  fiveHour?: PhoneLinkWindow;
+  sevenDay?: PhoneLinkWindow;
+  resetCredits?: number;
+  planType?: string;
+  updatedAt: number;
+}
+
+export interface PhoneLinkUsage {
+  claude: PhoneLinkPlan | null;
+  codex: PhoneLinkPlan | null;
+}
+
+/** What one service pill says, for a phone whose user allowed it (Rust cuts every text to size). */
+export interface PhoneLinkService {
+  id: string;
+  title: string;
+  headline: string;
+  reason?: string;
+  items: { label: string; detail: string }[];
+}
+
+export interface PhoneServicesStatus {
+  /** The services allowed for the phone. */
+  services: string[];
+}
+
+export interface PhoneUsageStatus {
+  enabled: boolean;
+}
+
+export interface PhoneDiffsStatus {
+  enabled: boolean;
+}
+
+export interface PhoneLinkApproval {
+  requestId: string;
+  sessionId: string;
+  pillId: string;
+  tool: string;
+  command: string;
+}
+
+/** The question Claude Code is waiting on, for a phone that may answer it (phone_link/hub.rs). */
+export interface PhoneLinkQuestion {
+  requestId: string;
+  sessionId: string;
+  pillId: string;
+  questions: { question: string; options: { label: string; description: string }[]; multiSelect: boolean }[];
+}
+
+export interface PhoneAnswersStatus {
+  enabled: boolean;
+}
+
 export const Bridge = {
   boot: () => call<BootInfo>("boot"),
+  /** The system's languages as the webview sees them, for Rust's own texts (i18n.rs). */
+  setSystemLanguages: (languages: string[]) => call<void>("set_system_languages", { languages }),
 
   saveSettings: (settings: Settings) => call<void>("save_settings", { settings }),
 
@@ -53,10 +201,34 @@ export const Bridge = {
 
   reposition: () => call<void>("reposition"),
 
+  /** Displays the island can be pinned to: `key` is what `settings.screen` stores. */
+  listMonitors: () => call<{ key: string; label: string }[]>("list_monitors"),
+
   openUrl: (url: string) => call<void>("open_url", { url }),
+
+  /** Which of these sounds have a file of the user's own in the sounds folder. */
+  customSounds: (names: readonly string[]) => call<string[]>("custom_sounds", { names }),
+  /** The user's file for one sound, as raw bytes. */
+  customSound: (name: string) => call<ArrayBuffer>("custom_sound", { name }),
+  revealSoundsFolder: () => call<void>("reveal_sounds_folder"),
+  /** Tells the island to read the sounds folder again ("sounds-changed"). */
+  reloadSounds: () => call<void>("reload_sounds"),
 
   /** "Open terminal" → opens the folder in VS Code when `code` is on PATH. */
   openInVSCode: (path: string | null) => call<boolean>("open_in_vscode", { path }),
+
+  /**
+   * "Open terminal": the window the session runs in when Rust found it
+   * (Windows; Linux on X11 and KDE Plasma), else the folder in VS Code.
+   */
+  openSession: (sessionId: string | null, path: string | null) =>
+    call<boolean>("open_session", { sessionId, path }),
+
+  /** The Claude desktop app, for the Claude Desktop pill (Windows only). */
+  openClaudeDesktop: () => call<boolean>("open_claude_desktop"),
+
+  /** The diff card's ↗: an existing file, in VS Code; never launched by its type. */
+  openFileInVSCode: (path: string) => call<boolean>("open_file_in_vscode", { path }),
 
   quit: () => call<void>("quit_app"),
 
@@ -67,6 +239,8 @@ export const Bridge = {
 
   // ── Claude Code hooks ─────────────────────────────────────────────────────
   hooksStatus: () => call<HookStatus>("hooks_status"),
+  /** Pill ID → whether that agent's hooks reach Coucou (read-only, Mac #183). */
+  agentHooksStatus: () => call<Record<string, boolean>>("agent_hooks_status"),
   /** Diff to show before anything is written. `install: false` previews removal. */
   hooksPreview: (install: boolean) => callOrThrow<HookPreview>("hooks_preview", { install }),
   /**
@@ -76,73 +250,98 @@ export const Bridge = {
   hooksApply: (install: boolean, fingerprint: string) =>
     callOrThrow<string>("hooks_apply", { install, fingerprint }),
 
-  agentHooksStatus: (agent: string) => IS_TAURI
-    ? callOrThrow<HookStatus>("agent_hooks_status", { agent })
-    : Promise.resolve(null),
+  // ── Other agents (Gemini CLI, Codex, Cursor…) ─────────────────────────────
+  agentHooksList: () => call<AgentHookStatus[]>("agent_hooks_list"),
+  /** Diff to show before anything is written. `install: false` previews removal. */
   agentHooksPreview: (agent: string, install: boolean) =>
-    callOrThrow<HookPreview>("agent_hooks_preview", { agent, install }),
+    callOrThrow<AgentHookPlan>("agent_hooks_preview", { agent, install }),
+  /**
+   * Writes the agent's config — only ever after an explicit click, and only when
+   * it still matches the preview the user looked at. Returns the backups taken.
+   */
   agentHooksApply: (agent: string, install: boolean, fingerprint: string) =>
     callOrThrow<string>("agent_hooks_apply", { agent, install, fingerprint }),
+  // ── Plan usage: the status line relay, installed apart from the hooks ──────
+  /** Diff of the status line change. `install: false` previews taking the relay out. */
+  statusLinePreview: (install: boolean) => callOrThrow<HookPreview>("status_line_preview", { install }),
+  /** Same rules as hooksApply: an explicit click, and only for the diff that was shown. */
+  statusLineApply: (install: boolean, fingerprint: string) =>
+    callOrThrow<string>("status_line_apply", { install, fingerprint }),
+  /**
+   * Asks the Codex CLI (`codex app-server`) for its plan limits, as Codex's
+   * /status does. The raw `account/rateLimits/read` result, or null when Codex
+   * is missing, not signed in or slow (15 s).
+   */
+  codexPlanUsage: () => call<unknown>("codex_plan_usage"),
 
   approvalDecision: (requestId: string, decision: "allow" | "deny") =>
-    callOrThrow<boolean>("approval_decision", { requestId, decision }),
+    call<void>("approval_decision", { requestId, decision }),
   /** "The card is up" — until this lands the relay only waits a moment. */
   approvalAck: (requestId: string) => call<void>("approval_ack", { requestId }),
+  /** Answers a question Claude Code asked: question text → chosen label. */
+  approvalAnswer: (requestId: string, answers: Record<string, string | string[]>) =>
+    call<void>("approval_answer", { requestId, answers }),
+
   /** "Nobody can act on this" — Claude Code asks in the terminal right away. */
   approvalDecline: (requestId: string) => call<void>("approval_decline", { requestId }),
+
+  // ── Phone link (Coucou for Android) ───────────────────────────────────────
+  phoneLinkStatus: () => call<PhoneLinkStatus>("phone_link_status"),
+  /** Only ever from the switch in Settings. Throws with the reason if it cannot start. */
+  phoneLinkSetEnabled: (enabled: boolean) => callOrThrow<PhoneLinkStatus>("phone_link_set_enabled", { enabled }),
+  phoneLinkPairing: () => callOrThrow<PhoneLinkPairing>("phone_link_pairing"),
+  /** A new code: the phone that had the old one is disconnected. */
+  phoneLinkNewPairing: () => callOrThrow<PhoneLinkPairing>("phone_link_new_pairing"),
+  phoneDetailsStatus: () => call<PhoneDetailsStatus>("phone_details_status"),
+  /** Off by default; only from the switch in Settings. Phones are reconnected so they learn about it. */
+  phoneDetailsSetEnabled: (enabled: boolean) => callOrThrow<PhoneDetailsStatus>("phone_details_set_enabled", { enabled }),
+  phoneAnswersStatus: () => call<PhoneAnswersStatus>("phone_answers_status"),
+  /** Off by default; only from the switch in Settings. Phones are reconnected so they learn about it. */
+  phoneAnswersSetEnabled: (enabled: boolean) => callOrThrow<PhoneAnswersStatus>("phone_answers_set_enabled", { enabled }),
+  phoneDiffsStatus: () => call<PhoneDiffsStatus>("phone_diffs_status"),
+  /** Off by default; only from the switch in Settings. Phones are reconnected so they learn about it. */
+  phoneDiffsSetEnabled: (enabled: boolean) => callOrThrow<PhoneDiffsStatus>("phone_diffs_set_enabled", { enabled }),
+  /** The answer to a phone's request for a file's diff (the "phone-link-getdiff" event); `conn` says which phone. */
+  phoneLinkSendDiff: (conn: number, diff: PhoneLinkDiff) => call<void>("phone_link_send_diff", { conn, diff }),
+  phoneServicesStatus: () => call<PhoneServicesStatus>("phone_services_status"),
+  /** None by default; only from the ticks in Settings. Phones are reconnected so they learn about it. */
+  phoneServicesSet: (services: string[]) => callOrThrow<PhoneServicesStatus>("phone_services_set", { services }),
+  phoneLinkPublishServices: (services: PhoneLinkService[]) => call<void>("phone_link_publish_services", { services }),
+  phoneRelayStatus: () => call<PhoneRelayStatus>("phone_relay_status"),
+  /** Off by default; needs a valid wss:// address and a stored access key. */
+  phoneRelaySet: (enabled: boolean, url: string) => callOrThrow<PhoneRelayStatus>("phone_relay_set", { enabled, url }),
+  /** Write-only: stored in the OS keystore, never sent back. An empty value clears it. */
+  phoneRelaySetAccess: (access: string) => callOrThrow<PhoneRelayStatus>("phone_relay_set_access", { access }),
+  phoneUsageStatus: () => call<PhoneUsageStatus>("phone_usage_status"),
+  /** Off by default; only from the switch in Settings. Phones are reconnected so they learn about it. */
+  phoneUsageSetEnabled: (enabled: boolean) => callOrThrow<PhoneUsageStatus>("phone_usage_set_enabled", { enabled }),
+  phoneLinkPublishUsage: (usage: PhoneLinkUsage) => call<void>("phone_link_publish_usage", { usage }),
+  phoneChatStatus: () => call<PhoneChatStatus>("phone_chat_status"),
+  /** Off by default; only from the switch in Settings. Phones are reconnected so they learn about it. */
+  phoneChatSetEnabled: (enabled: boolean) => callOrThrow<PhoneChatStatus>("phone_chat_set_enabled", { enabled }),
+  phoneChatSetModels: (models: string[]) => callOrThrow<PhoneChatStatus>("phone_chat_set_models", { models }),
+  phoneLinkPublish: (sessions: PhoneLinkSession[], approval: PhoneLinkApproval | null) =>
+    call<void>("phone_link_publish", { sessions, approval }),
+  phoneLinkPublishQuestion: (question: PhoneLinkQuestion | null) => call<void>("phone_link_publish_question", { question }),
+  /** What Mochi wears ("auto" or an outfit), for phones that asked for it. */
+  phoneLinkPublishPrefs: (outfit: string) => call<void>("phone_link_publish_prefs", { outfit }),
 
   // ── Chat, files, secrets ──────────────────────────────────────────────────
   /** One chat turn. The API key and any file bytes never leave Rust. */
   chatSend: (query: string, context: ChatContext | null) =>
     callOrThrow<{ text: string }>("chat_send", { query, context }),
   chatReset: () => call<void>("chat_reset"),
-  agentRuntimeTools: () => callOrThrow<RuntimeToolSpec[]>("agent_runtime_tools"),
-  agentChatStatus: () => callOrThrow<AgentChatStatus[]>("agent_chat_status"),
-  managedServiceStatus: () => callOrThrow<ManagedModelStatus>("managed_service_status"),
-  managedServiceConfigure: (settings: ManagedModelSettings) => callOrThrow<ManagedModelStatus>("managed_service_configure", { settings }),
-  managedServiceSetProviderKey: (platform: string, value: string) => callOrThrow<ManagedModelStatus>("managed_service_set_provider_key", { platform, value }),
-  managedServiceProvision: () => callOrThrow<ManagedModelStatus>("managed_service_provision"),
-  managedServiceStart: () => callOrThrow<ManagedModelStatus>("managed_service_start"),
-  managedServiceStop: () => callOrThrow<ManagedModelStatus>("managed_service_stop"),
-  hermesStatus: () => callOrThrow<HermesRuntimeStatus>("hermes_status"),
-  hermesProvision: () => callOrThrow<HermesRuntimeStatus>("hermes_provision"),
-  hermesConfigure: (settings: HermesRuntimeSettings) => callOrThrow<HermesRuntimeStatus>("hermes_configure", { settings }),
-  agentChatStart: (request: AgentChatStart) => callOrThrow<void>("agent_chat_start", { request }),
-  agentChatCancel: (conversationId: string, runId: string) =>
-    callOrThrow<boolean>("agent_chat_cancel", { conversationId, runId }),
-  agentChatDecide: (conversationId: string, runId: string, requestId: string, decision: "allow" | "allowConversation" | "deny") =>
-    callOrThrow<boolean>("agent_chat_decide", { conversationId, runId, requestId, decision }),
-  memoryPreferences: () => callOrThrow<MemoryPreferences>("memory_preferences"),
-  memorySetPreferences: (preferences: MemoryPreferences) => callOrThrow<MemoryPreferences>("memory_set_preferences", { preferences }),
-  memoryList: (query: MemoryQuery) => callOrThrow<MemoryRecord[]>("memory_list", { query }),
-  memoryPropose: (candidate: MemoryCandidate) => callOrThrow<MemoryRecord>("memory_propose", { candidate }),
-  memoryApprove: (id: string, revision: number) => callOrThrow<MemoryRecord>("memory_approve", { id, revision }),
-  memoryReject: (id: string, revision: number) => callOrThrow<MemoryRecord>("memory_reject", { id, revision }),
-  memoryForget: (id: string, revision: number) => callOrThrow<number>("memory_forget", { id, revision }),
-  memoryExport: (includeHistory: boolean) => callOrThrow<string>("memory_export", { includeHistory }),
-  skillsList: (query: MemoryQuery) => callOrThrow<SkillRecord[]>("skills_list", { query }),
-  skillsPropose: (candidate: SkillCandidate) => callOrThrow<SkillRecord>("skills_propose", { candidate }),
-  skillsApprove: (id: string, revision: number) => callOrThrow<SkillRecord>("skills_approve", { id, revision }),
-  skillsReject: (id: string, revision: number) => callOrThrow<SkillRecord>("skills_reject", { id, revision }),
-  skillsForget: (id: string, revision: number) => callOrThrow<number>("skills_forget", { id, revision }),
-  skillsDiff: (id: string, revision: number) => callOrThrow<SkillDiff>("skills_diff", { id, revision }),
-  skillsLoad: (id: string, revision: number) => callOrThrow<SkillRecord>("skills_load", { id, revision }),
-  skillsExport: (id: string, revision: number) => callOrThrow<SkillExport>("skills_export", { id, revision }),
-  skillsImport: (markdown: string, scope: string) => callOrThrow<SkillRecord>("skills_import", { markdown, scope }),
-  skillsRestore: (id: string) => callOrThrow<SkillRecord>("skills_restore", { id }),
-  historyList: (limit = 100) => callOrThrow<SessionRecord[]>("history_list", { limit }),
-  historySearch: (query: string, limit = 50) => callOrThrow<SessionSearchHit[]>("history_search", { query, limit }),
-  historyMessages: (conversationId: string, limit = 100) => callOrThrow<StoredMessage[]>("history_messages", { conversationId, limit }),
-  historyContext: (contextId: string, limit = 100, budget = 65536) => callOrThrow<import("./personal-types").PersonalContextHistory>("history_context", { contextId, limit, budget }),
-  historyForget: (conversationId: string) => callOrThrow<number>("history_forget", { conversationId }),
-  permissionsRevoke: (conversationId: string) => callOrThrow<void>("permissions_revoke", { conversationId }),
-  documentsChoose: () => callOrThrow<string[]>("documents_choose"),
-  documentsIngest: (conversationId: string, paths: string[], operationId?: string) => callOrThrow<Attachment[]>("documents_ingest", { conversationId, paths, operationId: operationId ?? null }),
-  documentsCancel: (operationId: string) => callOrThrow<boolean>("documents_cancel", { operationId }),
-  documentsList: (conversationId: string) => callOrThrow<Attachment[]>("documents_list", { conversationId }),
-  documentsRemove: (conversationId: string, id: string) => callOrThrow<void>("documents_remove", { conversationId, id }),
-  documentsPrepare: (conversationId: string, attachmentIds: string[], budgetChars: number) => callOrThrow<PreparedDocuments>("documents_prepare", { conversationId, attachmentIds, budgetChars }),
-  documentsRead: (conversationId: string, id: string, offsetChars: number, limitChars: number) => callOrThrow<DocumentChunk>("documents_read", { conversationId, id, offsetChars, limitChars }),
+  /**
+   * The models a provider offers, for the picker in the chat view. Rust asks
+   * the provider only when it has a key (or a server address).
+   */
+  chatModels: (provider: string) => callOrThrow<ModelInfo[]>("chat_models", { provider }),
+  /** Settings → Local models → Connect: does the server answer, and with which models? */
+  /** The custom server's key, bound to the address it is entered for. */
+  localSetKey: (url: string, key: string) => call<void>("local_set_key", { url, key }),
+
+  localConnect: (provider: "ollama" | "lmstudio" | "custom", url: string) =>
+    callOrThrow<LocalServer>("local_connect", { provider, url }),
   /** Copies a dropped file into the inbox. */
   ingestFile: (path: string) => callOrThrow<DroppedFile>("ingest_file", { path }),
   /** Only ever tells you whether a key exists — never its value. */
@@ -152,12 +351,103 @@ export const Bridge = {
 
   // ── Integrations ──────────────────────────────────────────────────────────
   refreshIntegration: (id: string) => call<void>("refresh_integration", { id }),
+  /** The GitHub card is on screen: refetch that part if it is stale. */
+  githubRefresh: (section: "pulse" | "activity") => call<void>("github_refresh", { section }),
   /** Opens the configured n8n instance in the browser. */
   openN8n: () => call<void>("open_n8n"),
 
   /** Tray → Pause. Stops the integration pollers, not just the island. */
   setPaused: (paused: boolean) => call<void>("set_paused", { paused }),
+
+  // ── Global shortcuts ──────────────────────────────────────────────────────
+  /** How each global shortcut went when Rust last registered them. */
+  shortcutsStatus: () => call<ShortcutsReport>("shortcuts_status"),
+  /** Lets go of every global shortcut while Settings records a new one. */
+  shortcutsSuspend: (suspended: boolean) => call<void>("shortcuts_suspend", { suspended }),
+
+  // ── Weekly recap ──────────────────────────────────────────────────────────
+  /** Turns and decisions from `since` (Unix seconds) on, plus the recap prefs. */
+  recapHistory: (since: number) => call<RecapHistory>("recap_history", { since: Math.floor(since) }),
+  recapPrefs: () => call<RecapPrefs>("recap_prefs"),
+  recapSetEnabled: (enabled: boolean) => call<void>("recap_set_enabled", { enabled }),
+  recapSetHideProjects: (hide: boolean) => call<void>("recap_set_hide_projects", { hide }),
+  /** `week` is the Monday (YYYY-MM-DD) the recap opened on its own for. */
+  recapMarkShown: (week: string) => call<void>("recap_mark_shown", { week }),
+  recapClear: () => call<void>("recap_clear"),
+  /** Writes the PNG (a data URL) into Pictures or Downloads; returns its path. */
+  recapSavePng: (data: string, week: string) => callOrThrow<string>("recap_save_png", { data, week }),
+  /** Opens the folder of the image saved last. */
+  recapRevealSaved: () => call<void>("recap_reveal_saved"),
+
+  // ── Mochi on the desktop (src-tauri/src/desktop.rs) ───────────────────────
+  desktopInfo: () => call<DesktopInfo>("desktop_mochi_info"),
+  /** Dragged out of the island: (x, y) is the pointer in island-window coordinates. */
+  desktopPickUp: (x: number, y: number) => call<boolean>("desktop_mochi_pick_up", { x, y }),
+  /** Linux: the pointer moved during that drag (Windows carries him from Rust). */
+  desktopCarry: (x: number, y: number) => call<void>("desktop_mochi_carry", { x, y }),
+  desktopCarryEnd: (x: number, y: number) => call<void>("desktop_mochi_carry_end", { x, y }),
+  /** A drag started on the desktop Mochi; resolves to his top-left corner. */
+  desktopDragBegin: () => call<[number, number] | null>("desktop_mochi_drag_begin"),
+  /** X11: top-left corner, physical pixels. */
+  desktopDragMove: (x: number, y: number) => call<void>("desktop_mochi_drag_move", { x, y }),
+  desktopDragEnd: (x: number, y: number) => call<void>("desktop_mochi_drag_end", { x, y }),
+  /** From the island to his spot. False: no spot on any connected display.
+   *  `anywhere`: the first-visit corner then, rather than staying home. */
+  desktopFlyOut: (anywhere = false) => call<boolean>("desktop_mochi_fly_out", { anywhere }),
+  /** To the island, then hidden. `forget`: he lives in the island again. */
+  desktopFlyHome: (forget: boolean) => call<boolean>("desktop_mochi_fly_home", { forget }),
+  /** Asleep, the cursor poll stops. */
+  desktopSetAsleep: (asleep: boolean) => call<void>("desktop_mochi_set_asleep", { asleep }),
+
+  // ── Spotify (src-tauri/src/spotify.rs, Linux) ─────────────────────────────
+  /** Reads the player again (the card came on screen) and reports it. */
+  spotifyRefresh: () => call<SpotifyState | null>("spotify_refresh"),
+  /** True when Spotify took it. `value`: seconds for seek, 0/1 for shuffle and repeat, 0…100 for volume. */
+  spotifyControl: (action: SpotifyAction, value?: number) =>
+    call<boolean>("spotify_control", { action, value: value ?? null }),
+  /** Brings Spotify forward or starts it; without it, its download page. */
+  spotifyOpen: () => call<boolean>("spotify_open"),
+  /** Whether there is a Spotify to launch (Settings). */
+  spotifyInstalled: () => call<boolean>("spotify_installed"),
 };
+
+export type SpotifyAction = "playPause" | "next" | "previous" | "seek" | "shuffle" | "repeat" | "volume";
+
+export type ShortcutStatus =
+  | "active" | "off" | "inUse" | "duplicate" | "invalid"
+  | "typesCharacter" | "unsupported" | "notPorted"
+  /** Wayland: handed to the desktop's portal, no answer yet / left out by it. */
+  | "pending" | "refused";
+
+export interface ShortcutsReport {
+  /** `trigger`: on Wayland, the keys the desktop says run it, in its words. */
+  actions: { id: string; status: ShortcutStatus; typed?: string; trigger?: string }[];
+  /** "wayland" or "no-display" when no key grab can be made. */
+  blocked: string | null;
+  /** `<executable> --shortcut`: append an action id for a desktop shortcut. */
+  command: string;
+  /** Wayland: the shortcuts went to the desktop's GlobalShortcuts portal. */
+  portal?: "pending" | "active" | null;
+}
+
+/** How the desktop Mochi's window works here (platform::DesktopMode). */
+export type DesktopMode = "poll" | "window" | "layer" | "off";
+
+export interface DesktopInfo {
+  mode: DesktopMode;
+  /** He was on the desktop when the app last quit. */
+  onDesktop: boolean;
+}
+
+/** An event for one window only (island ⇄ desktop Mochi). Never throws. */
+export async function emitToWindow(label: string, event: string, payload?: unknown) {
+  if (!IS_TAURI) return;
+  try {
+    await emitTo(label, event, payload);
+  } catch (err) {
+    console.error(`[coucou] emit ${event} failed`, err);
+  }
+}
 
 export interface IntegrationUpdate {
   id: string;
@@ -166,51 +456,22 @@ export interface IntegrationUpdate {
   event: { success: boolean; label: string; detail: string | null } | null;
 }
 
-export type ChatAgent = "codex" | "claude" | "gemini" | "copilot" | "hermes";
-export interface ManagedModelSettings {
-  setupDecision: "pending" | "declined" | "accepted"; enabled: boolean; agentName: string; autostart: boolean;
-  approvedProviders: string[]; model: { platform: string; modelId: string } | null;
-}
-export interface ManagedModelStatus {
-  settings: ManagedModelSettings; runtimeInstalled: boolean; running: boolean; managedByOtherInstance: boolean;
-  port: number | null; processId: number | null; availableProviders: string[]; revision: string; nodeVersion: string; lastError: string | null;
-}
-export interface HermesRuntimeSettings {
-  enabled: boolean; pythonExecutable: string; sourceDirectory: string; useFreeModels: boolean; baseUrl: string; model: string;
-  contextWindowTokens: number;
-}
-export interface HermesRuntimeStatus {
-  settings: HermesRuntimeSettings; runtimeInstalled: boolean; modelConfigured: boolean; available: boolean; detail: string; revision: string;
-}
-export interface AgentChatStatus {
-  agent: ChatAgent;
-  available: boolean;
-  path: string | null;
-  detail: string;
-  readonlyOnly?: boolean;
-  personalSupported?: boolean;
-}
-export interface AgentChatStart {
-  conversationId: string;
-  runId: string;
-  agent: ChatAgent;
-  cwd: string;
-  sessionId: string | null;
-  query: string;
-  writable: boolean;
-  attachmentIds: string[];
-  contextId?: string | null;
-}
-export interface AgentChatEvent {
-  conversationId: string;
-  runId: string;
-  kind: string;
-  data: Record<string, unknown>;
-}
-
 export type ChatContext =
   | { kind: "file"; name: string; path: string }
   | { kind: "window"; appName: string; title: string; url?: string };
+
+export interface ModelInfo {
+  id: string;
+  label: string;
+}
+
+export interface LocalServer {
+  /** The address as it is stored. */
+  url: string;
+  models: string[];
+  /** The address is this machine. */
+  loopback: boolean;
+}
 
 export interface DroppedFile {
   name: string;
@@ -219,12 +480,35 @@ export interface DroppedFile {
 }
 
 export interface HookStatus {
-  agent?: string;
-  cliAvailable?: boolean;
   installed: boolean;
+  /** Coucou's status line relay (plan usage) is the status line in settings.json. */
+  planRelayInstalled: boolean;
   settingsPath: string;
   hookPath: string;
   hookReady: boolean;
+}
+
+/** One agent other than Claude Code, as agents.rs reports it. */
+export interface AgentHookStatus {
+  /** The `--agent` name; its pill is `agent_<id>`. */
+  id: string;
+  name: string;
+  installed: boolean;
+  /** The file (or files, one per line) Coucou writes. */
+  path: string;
+  hookReady: boolean;
+  /** The island can allow or deny this agent's permission requests. */
+  approvals: boolean;
+  /** What to do once it is written. */
+  note: string;
+}
+
+export interface AgentHookPlan {
+  diff: string;
+  /** Where each existing file is copied first, one per line; "" when none. */
+  backup: string;
+  path: string;
+  fingerprint: string;
 }
 
 export interface HookPreview {
@@ -252,12 +536,70 @@ export interface DragDropPayload {
   paths?: string[];
 }
 
-/** Files dragged onto the island. Only reaches us when the window takes the mouse. */
+interface WebView2Bridge {
+  postMessageWithAdditionalObjects(message: unknown, objects: ArrayLike<unknown>): void;
+}
+
+/**
+ * Files dragged onto the island. Only reaches us when the window takes the mouse.
+ *
+ * On Windows WebView2 takes the drop itself, as in Edge — Tauri's drop handling
+ * never sees drags from the classic Explorer folder view (see
+ * src-tauri/src/webview_drop.rs). Enter/over/leave come straight from the page;
+ * the drop hands the File objects to Rust, which answers with their real paths
+ * as a `file-drag` event. Elsewhere (Linux) Tauri's own drag events still do it.
+ */
 export async function onDragDrop(handler: (e: DragDropPayload) => void) {
   if (!IS_TAURI) return () => {};
-  return getCurrentWebview().onDragDropEvent((event) => {
-    handler(event.payload as DragDropPayload);
-  });
+  const webview = (window as unknown as { chrome?: { webview?: WebView2Bridge } }).chrome?.webview;
+  if (!webview) {
+    return getCurrentWebview().onDragDropEvent((event) => {
+      handler(event.payload as DragDropPayload);
+    });
+  }
+  const hasFiles = (e: DragEvent) => e.dataTransfer?.types.includes("Files") ?? false;
+  // dragenter/dragleave fire for every element crossed; only the outermost pair counts.
+  let depth = 0;
+
+  const onEnter = (e: DragEvent) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    if (depth++ === 0) handler({ type: "enter" });
+  };
+  const onOver = (e: DragEvent) => {
+    if (!hasFiles(e)) return;
+    // Without this WebView2 refuses the drop — or navigates to the file.
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+    handler({ type: "over" });
+  };
+  const onLeave = (e: DragEvent) => {
+    if (!hasFiles(e) || depth === 0) return;
+    if (--depth === 0) handler({ type: "leave" });
+  };
+  const onDrop = (e: DragEvent) => {
+    e.preventDefault();
+    depth = 0;
+    const files = e.dataTransfer?.files;
+    if (!files || files.length === 0) {
+      handler({ type: "drop", paths: [] });
+      return;
+    }
+    webview.postMessageWithAdditionalObjects("coucou-file-drop", files);
+  };
+
+  window.addEventListener("dragenter", onEnter);
+  window.addEventListener("dragover", onOver);
+  window.addEventListener("dragleave", onLeave);
+  window.addEventListener("drop", onDrop);
+  const unlisten = await listen<DragDropPayload>("file-drag", (e) => handler(e.payload));
+  return () => {
+    window.removeEventListener("dragenter", onEnter);
+    window.removeEventListener("dragover", onOver);
+    window.removeEventListener("dragleave", onLeave);
+    window.removeEventListener("drop", onDrop);
+    unlisten();
+  };
 }
 
 export async function onEvent<T>(name: string, handler: (payload: T) => void) {

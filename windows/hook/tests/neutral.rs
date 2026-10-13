@@ -52,7 +52,11 @@ fn invalid_payloads_preserve_each_providers_neutral_stdout() {
             assert!(output.stderr.is_empty());
             assert_eq!(
                 String::from_utf8(output.stdout).unwrap().trim(),
-                if agent == "gemini" { "{}" } else { "" }
+                if matches!(agent, "gemini" | "copilot") {
+                    "{}"
+                } else {
+                    ""
+                }
             );
         }
     }

@@ -1,4 +1,4 @@
-import { Bridge, type HermesRuntimeStatus } from "../core/bridge";
+import { Bridge, type HermesRuntimeStatus } from "../personal/core/bridge";
 import { h, clear } from "../views/dom";
 
 export async function buildHermesSection(): Promise<HTMLElement> {

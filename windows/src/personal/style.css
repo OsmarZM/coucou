@@ -1,0 +1,117 @@
+.personal-runtime .chat-card {
+  overflow: hidden;
+}
+.personal-runtime .chat-body {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 14px 10px 78px;
+}
+.personal-runtime .chat-controls { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 0 0 auto; }
+.personal-runtime .chat-controls[hidden], .personal-runtime .chat-permission[hidden], .personal-runtime .chat-action[hidden] { display: none; }
+.personal-runtime .chat-characters { display: flex; flex: 1 1 auto; justify-content: space-between; gap: 5px; min-width: 0; }
+.personal-runtime .chat-character { display: flex; align-items: center; justify-content: center; gap: 5px; flex: 1 1 auto; min-width: 0; height: 32px; padding: 3px 7px; border: 1px solid transparent; border-radius: 9px; color: var(--dim-2); background: rgba(255,255,255,.035); font: 500 9px var(--font); cursor: pointer; }
+.personal-runtime .chat-character .mini { flex: 0 0 auto; pointer-events: none; }
+.personal-runtime .chat-character.on { color: var(--ink); background: rgba(255,255,255,.08); border-color: color-mix(in srgb, var(--character-color) 55%, transparent); }
+.personal-runtime .chat-character:hover { background: rgba(255,255,255,.11); }
+.personal-runtime .chat-character:focus-visible { outline: 1px solid var(--character-color); outline-offset: 2px; }
+.personal-runtime .chat-character:disabled { opacity: .45; cursor: default; }
+.personal-runtime .chat-message-meta { color: var(--dim-2); font: 400 8px var(--font); margin-bottom: 3px; }
+.personal-runtime .chat-select, .personal-runtime .chat-config-input, .personal-runtime .chat-action {
+  color: var(--ink-2); background: #202127; border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 7px; font: 400 10px var(--font); min-width: 0; height: 24px; padding: 3px 6px;
+}
+.personal-runtime .chat-select { width: 116px; }
+.personal-runtime .chat-select option { color: #e4e6eb; background: #202127; }
+.personal-runtime .chat-conversations { flex: 1 1 auto; }
+.personal-runtime .chat-config-input { flex: 1 1 auto; width: 0; cursor: text; }
+.personal-runtime .chat-action { flex: 0 0 auto; cursor: pointer; }
+.personal-runtime .chat-action:disabled, .personal-runtime .send-btn:disabled { opacity: 0.45; cursor: default; }
+.personal-runtime .chat-write { display: flex; gap: 4px; align-items: center; font: 400 10px var(--font); white-space: nowrap; color: var(--ink-2); }
+.personal-runtime .chat-write input { accent-color: #9c8bff; margin: 0; }
+.personal-runtime .chat-muted { color: var(--dim-3); font: 400 9px var(--font); }
+.personal-runtime .chat-resume .chat-muted { max-width: 155px; line-height: 11px; }
+.personal-runtime .chat-notice { flex: 0 0 auto; font: 400 10px var(--font); line-height: 13px; color: #c6bbff; max-height: 26px; overflow-y: auto; user-select: text; }
+.personal-runtime .chat-storage { flex: 0 0 auto; }
+.personal-runtime .chat-empty { color: var(--dim-3); font: 400 11px var(--font); padding: 5px 0; }
+.personal-runtime .chat-tools { flex: 0 0 auto; color: #9097a5; font: 400 10px var(--font); overflow-wrap: anywhere; }
+.personal-runtime .chat-tools summary { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.personal-runtime .chat-tools pre { white-space: pre-wrap; font: 400 10px var(--font); user-select: text; }
+.personal-runtime .chat-permission { flex: 0 1 auto; min-height: 0; padding: 6px 8px; border: 1px solid rgba(245,165,36,0.45); border-radius: 8px; background: rgba(245,165,36,0.09); font: 400 10px var(--font); color: var(--ink-2); }
+.personal-runtime .chat-permission strong { display: block; margin-bottom: 4px; }
+.personal-runtime .chat-permission-detail { max-height: 75px; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 400 10px ui-monospace, monospace; user-select: text; margin: 4px 0 6px; }
+.personal-runtime .chat-allow { border-color: #f5a524; background: rgba(245,165,36,0.15); }
+.personal-runtime .chat-body [hidden] { display: none !important; }
+.personal-runtime .chat-advanced { flex: 0 0 auto; color: var(--dim-2); font: 400 10px var(--font); }
+.personal-runtime .chat-advanced summary, .personal-runtime .chat-usage summary { cursor: pointer; padding: 2px 0; }
+.personal-runtime .chat-advanced[open] { max-height: 94px; overflow-y: auto; }
+.personal-runtime .chat-advanced .chat-controls { margin-top: 4px; }
+.personal-runtime .chat-attachments { display: flex; flex: 0 0 auto; flex-wrap: wrap; gap: 4px; max-height: 50px; overflow-y: auto; }
+.personal-runtime .chat-attachments:empty { display: none; }
+.personal-runtime .attachment-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 3px 6px; border-radius: 7px; background: rgba(255,255,255,0.08); color: var(--ink-2); font: 400 10px var(--font); }
+.personal-runtime .attachment-chip > span:first-of-type { max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.personal-runtime .attachment-chip input { accent-color: #9c8bff; margin: 0; }
+.personal-runtime .attachment-remove { background: none; border: 0; color: var(--dim-2); cursor: pointer; font: 400 14px var(--font); padding: 0 2px; }
+.personal-runtime .attachment-remove:disabled { opacity: .4; cursor: default; }
+.personal-runtime .chat-usage { color: var(--dim-2); font: 400 10px var(--font); margin-top: 5px; }
+.personal-runtime .usage-panel { padding: 5px 7px; background: rgba(255,255,255,.04); border-radius: 7px; user-select: text; }
+.personal-runtime .usage-row { display: flex; justify-content: space-between; gap: 8px; padding: 2px 0; }
+.personal-runtime .usage-row span:last-child { text-align: right; overflow-wrap: anywhere; }
+.personal-runtime .usage-block { padding: 6px 0; border-top: 1px solid rgba(255,255,255,.08); margin-top: 5px; }
+.personal-runtime .learned-list, .personal-runtime .learned-detail { min-height: 0; flex: 1 1 auto; overflow-y: auto; color: var(--ink-2); font: 400 11px var(--font); padding-right: 3px; }
+.personal-runtime .learned-record { padding: 6px 8px; margin-bottom: 5px; background: rgba(255,255,255,.045); border: 1px solid rgba(255,255,255,.08); border-radius: 8px; }
+.personal-runtime .learned-record summary { cursor: pointer; }
+.personal-runtime .learned-record summary strong { margin-right: 6px; }
+.personal-runtime .learned-record pre, .personal-runtime .learned-detail pre { white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; font: 400 10px var(--font); }
+.personal-runtime .learned-evidence { color: var(--dim-2); }
+.personal-runtime .learned-actions { flex-wrap: wrap; margin-top: 6px; }
+.personal-runtime .personal-preferences .chat-write { white-space: normal; }
+.personal-runtime .learned-detail > .chat-config-input { width: 100%; margin-bottom: 5px; }
+.personal-runtime .learned-detail > .chat-controls { margin-top: 6px; }
+.personal-runtime .chat-log {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-wrap: anywhere;
+  padding: 2px 0;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+.personal-runtime .chat-row {
+  display: flex;
+}
+.personal-runtime .chat-row.user {
+  justify-content: flex-end;
+  padding-left: 32px;
+}
+.personal-runtime .chat-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+}
+.personal-runtime .chat-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: 400 13px var(--font);
+  outline: none;
+  cursor: text;
+}
+.personal-runtime .chat-input::placeholder {
+  color: var(--dim-3);
+}
+.personal-runtime .chat-identity { display:flex; align-items:center; gap:8px; min-width:0; flex:1; color:var(--ink); font-size:11px; }
+.personal-runtime .chat-identity b { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.personal-runtime .chat-attachment-actions, .personal-runtime .up-actions { display:flex; align-items:center; flex-wrap:wrap; gap:6px; }
+.personal-runtime .drop-body .chat-muted { max-width:400px; line-height:1.3; font-size:9px; }
