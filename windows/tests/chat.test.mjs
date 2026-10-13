@@ -39,6 +39,28 @@ const $ = (cls) => view.el.querySelector(cls);
 const chips = () => view.el.find(".picker-chip").map((c) => c.textContent);
 const models = () => view.el.find(".picker-model").map((m) => m.textContent);
 
+test("official chat stays lazy and unsupported platforms cannot open the local runtime",()=>{
+  State.agentRuntimeAvailable=false;
+  const button=view.el.find(".tab").find(b=>b.textContent==="Agente local");
+  button.fire("click");
+  assert.equal(view.el.querySelector(".personal-runtime"),null);
+  assert.deepEqual(sent("agent_chat_status"),[]);
+  assert.deepEqual(sent("agent_chat_start"),[]);
+});
+
+test("opening the local mode preserves the official provider and never starts a task",async()=>{
+  State.agentRuntimeAvailable=true;
+  State.settings={...State.settings,chatProvider:"google",screen:"at:1920,0"};
+  const button=view.el.find(".tab").find(b=>b.textContent==="Agente local");
+  button.fire("click");await flush();
+  assert.ok(view.el.querySelector(".personal-runtime"));
+  assert.equal(State.settings.chatProvider,"google");
+  assert.equal(State.settings.screen,"at:1920,0");
+  assert.deepEqual(sent("agent_chat_start"),[]);
+  assert.deepEqual(sent("secret_set"),[]);
+  State.agentRuntimeAvailable=false;
+});
+
 test("the model button shows the active provider's model", () => {
   assert.equal($(".model-name").textContent, "claude-opus-5");
   State.settings = { ...State.settings, chatProvider: "google" };

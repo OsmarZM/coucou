@@ -109,7 +109,9 @@ pub fn start(app: AppHandle) {
 
     tauri::async_runtime::spawn(async move {
         let Some(path) = crate::platform::relay_socket_path() else {
-            log::line("no private runtime directory ($XDG_RUNTIME_DIR) — Claude Code hooks are inactive");
+            log::line(
+                "no private runtime directory ($XDG_RUNTIME_DIR) — Claude Code hooks are inactive",
+            );
             return;
         };
         // A socket file left behind by a crash answers nothing and can go. One
@@ -201,7 +203,9 @@ async fn handle(app: AppHandle, mut pipe: impl Relay) {
         Some(i) => &buf[..i],
         None => &buf[..],
     };
-    let Ok(mut payload) = serde_json::from_slice::<Value>(line) else { return };
+    let Ok(mut payload) = serde_json::from_slice::<Value>(line) else {
+        return;
+    };
     if !payload.is_object() {
         return;
     }
@@ -226,7 +230,11 @@ async fn handle(app: AppHandle, mut pipe: impl Relay) {
         return;
     }
 
-    let id = format!("{}-{}", std::process::id(), COUNTER.fetch_add(1, Ordering::Relaxed));
+    let id = format!(
+        "{}-{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    );
     let (tx, mut rx) = mpsc::channel::<Reply>(4);
     {
         let pending = app.state::<Pending>();
@@ -256,7 +264,9 @@ async fn handle(app: AppHandle, mut pipe: impl Relay) {
 /// a permission request always is (it waits for us), a quick event may already
 /// have exited, and then a later event of the session tries again.
 fn note_session_window(pipe: &impl Relay, payload: &Value, event: &str) {
-    let Some(session) = payload.get("session_id").and_then(Value::as_str) else { return };
+    let Some(session) = payload.get("session_id").and_then(Value::as_str) else {
+        return;
+    };
     if event == "SessionEnd" {
         session_window::forget(session);
         return;
@@ -264,7 +274,9 @@ fn note_session_window(pipe: &impl Relay, payload: &Value, event: &str) {
     if session_window::known(session) {
         return;
     }
-    let Some(relay) = pipe.client_pid() else { return };
+    let Some(relay) = pipe.client_pid() else {
+        return;
+    };
     let ancestors = crate::platform::process_ancestors(relay);
     // No ancestors: the relay was already gone, so try again next time. Some,
     // but none with a window (a classic console): settled, VS Code it is.
@@ -288,7 +300,9 @@ async fn wait_for_decision(id: &str, rx: &mut mpsc::Receiver<Reply>) -> Option<S
         }
         Ok(None) => return None,
         Err(_) => {
-            log::line(format!("hook id={id} island never acknowledged — terminal takes over"));
+            log::line(format!(
+                "hook id={id} island never acknowledged — terminal takes over"
+            ));
             return None;
         }
     }
@@ -311,14 +325,22 @@ async fn wait_for_decision(id: &str, rx: &mut mpsc::Receiver<Reply>) -> Option<S
 
 /// The log says a question was answered, never with what.
 fn loggable(decision: &str) -> &str {
-    if decision.starts_with('{') { "a question" } else { decision }
+    if decision.starts_with('{') {
+        "a question"
+    } else {
+        decision
+    }
 }
 
 fn send(app: &AppHandle, request_id: &str, reply: Reply, keep: bool) {
     let sender = {
         let pending = app.state::<Pending>();
         let mut map = pending.0.lock().unwrap();
-        if keep { map.get(request_id).cloned() } else { map.remove(request_id) }
+        if keep {
+            map.get(request_id).cloned()
+        } else {
+            map.remove(request_id)
+        }
     };
     match sender {
         Some(tx) => {
@@ -353,7 +375,11 @@ pub fn answer(app: &AppHandle, request_id: &str, decision: &str) {
 /// Called when an option is picked for a question Claude Code asked. `answers`
 /// maps each question's text to the chosen label, which is the shape
 /// AskUserQuestion takes them in.
-pub fn answer_question(app: &AppHandle, request_id: &str, answers: &HashMap<String, serde_json::Value>) {
+pub fn answer_question(
+    app: &AppHandle,
+    request_id: &str,
+    answers: &HashMap<String, serde_json::Value>,
+) {
     log::line(format!("decision id={request_id} answered a question"));
     // One line: the relay reads up to the first newline.
     let line = json!({ "answers": answers }).to_string();

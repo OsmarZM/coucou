@@ -1,7 +1,8 @@
 import {h} from './dom';
 import {State as OfficialState} from '../core/state';
 import {State} from '../personal/core/state';
-import {AgentChat, registerAgentChatHandlers, setHermesDisplayName} from '../personal/core/agent-chat';
+import {AgentChat, denyAgentChatApproval, registerAgentChatHandlers, setHermesDisplayName} from '../personal/core/agent-chat';
+import {updatePersonalApproval} from '../core/personal-ui';
 import {Bridge,onEvent,type ManagedModelStatus} from '../personal/core/bridge';
 import {buildPrompt} from '../personal/views/chat';
 import {buildLearned} from '../personal/views/learned';
@@ -23,6 +24,7 @@ export function buildPersonalAgent(onHeightChange:()=>void):ViewHost & {setActiv
  const el=h('div',{class:'personal-runtime'},providers,back,chat.el,knowledge.el);
  AgentChat.selectPersonal('hermes');
  function sync() {
+  updatePersonalApproval(AgentChat.current?.approval?.requestId ?? null,active);
   State.settings={...State.settings,...OfficialState.settings,screen:OfficialState.settings.screen === "cursor" ? "cursor" : "primary"};
   State.mode=OfficialState.mode;
   State.view=active && OfficialState.view==='prompt' ? (learned?'learned':'prompt'):'overview';
@@ -35,5 +37,9 @@ export function buildPersonalAgent(onHeightChange:()=>void):ViewHost & {setActiv
  const apply=(status:ManagedModelStatus)=>{setHermesDisplayName(status.settings.agentName);sync();};
  void Bridge.managedServiceStatus().then(apply).catch(()=>{});
  void onEvent<ManagedModelStatus>('managed-models-changed',apply);
- return {el,sync,focus(){if(!learned)chat.focus?.();},setActive(value){active=value;sync();}};
+ return {el,sync,focus(){if(!learned)chat.focus?.();},setActive(value){
+  active=value;
+  if(!value && AgentChat.current?.approval) void denyAgentChatApproval(AgentChat.current.id);
+  sync();
+ }};
 }

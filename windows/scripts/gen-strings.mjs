@@ -97,6 +97,10 @@ export function generate(catalog) {
     }
     // The English plural forms are needed to pick "one" in English too.
     if (typeof en !== "string") out.en = en;
+    // The community Mac catalog also contains new Mac-only drafts and bare
+    // brand names. They must not become incomplete Windows translations.
+    // tests/i18n.test.mjs still requires every Windows UI key in all languages.
+    if (LANGUAGES.some((lang) => lang !== "en" && out[lang] === undefined)) continue;
     strings[key] = out;
   }
   const sorted = Object.fromEntries(Object.entries(strings).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));

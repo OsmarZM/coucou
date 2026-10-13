@@ -33,8 +33,16 @@ pub struct Proc {
 /// window was not an ancestor (a classic console window belongs to conhost).
 #[cfg_attr(not(windows), allow(dead_code))]
 const WINDOWS_TREE_TOPS: &[&str] = &[
-    "explorer.exe", "services.exe", "wininit.exe", "winlogon.exe", "svchost.exe",
-    "smss.exe", "csrss.exe", "system", "sihost.exe", "userinit.exe",
+    "explorer.exe",
+    "services.exe",
+    "wininit.exe",
+    "winlogon.exe",
+    "svchost.exe",
+    "smss.exe",
+    "csrss.exe",
+    "system",
+    "sihost.exe",
+    "userinit.exe",
 ];
 
 /// The same on Linux, lower-cased and cut to the 15 bytes /proc keeps of a
@@ -46,19 +54,68 @@ const WINDOWS_TREE_TOPS: &[&str] = &[
 /// (platform/linux.rs leaves them out of the table).
 #[cfg_attr(windows, allow(dead_code))]
 const LINUX_TREE_TOPS: &[&str] = &[
-    "systemd", "init", "sshd", "sshd-session", "login", "su", "sudo", "doas",
-    "gdm-session-wor", "gdm-x-session", "gdm-wayland-ses", "sddm", "sddm-helper",
-    "lightdm", "lxdm-session", "greetd", "xinit", "xorg", "xwayland",
-    "dbus-daemon", "dbus-broker", "dbus-broker-lau",
-    "gnome-session-b", "gnome-session", "gnome-shell",
-    "startplasma-x11", "startplasma-way", "plasma_session", "ksmserver",
-    "plasmashell", "kwin_x11", "kwin_wayland",
-    "xfce4-session", "xfce4-panel", "xfdesktop", "xfwm4",
-    "cinnamon-sessio", "cinnamon", "cinnamon-launch", "mate-session", "mate-panel",
-    "marco", "lxsession", "lxqt-session", "lxqt-panel", "lxpanel", "openbox",
-    "budgie-wm", "budgie-panel", "cosmic-session", "cosmic-comp", "cosmic-panel",
-    "sway", "hyprland", "niri", "labwc", "wayfire", "river", "i3", "awesome",
-    "bspwm", "waybar",
+    "systemd",
+    "init",
+    "sshd",
+    "sshd-session",
+    "login",
+    "su",
+    "sudo",
+    "doas",
+    "gdm-session-wor",
+    "gdm-x-session",
+    "gdm-wayland-ses",
+    "sddm",
+    "sddm-helper",
+    "lightdm",
+    "lxdm-session",
+    "greetd",
+    "xinit",
+    "xorg",
+    "xwayland",
+    "dbus-daemon",
+    "dbus-broker",
+    "dbus-broker-lau",
+    "gnome-session-b",
+    "gnome-session",
+    "gnome-shell",
+    "startplasma-x11",
+    "startplasma-way",
+    "plasma_session",
+    "ksmserver",
+    "plasmashell",
+    "kwin_x11",
+    "kwin_wayland",
+    "xfce4-session",
+    "xfce4-panel",
+    "xfdesktop",
+    "xfwm4",
+    "cinnamon-sessio",
+    "cinnamon",
+    "cinnamon-launch",
+    "mate-session",
+    "mate-panel",
+    "marco",
+    "lxsession",
+    "lxqt-session",
+    "lxqt-panel",
+    "lxpanel",
+    "openbox",
+    "budgie-wm",
+    "budgie-panel",
+    "cosmic-session",
+    "cosmic-comp",
+    "cosmic-panel",
+    "sway",
+    "hyprland",
+    "niri",
+    "labwc",
+    "wayfire",
+    "river",
+    "i3",
+    "awesome",
+    "bspwm",
+    "waybar",
 ];
 
 #[cfg(windows)]
@@ -81,7 +138,9 @@ fn ancestors_below(procs: &HashMap<u32, Proc>, start: u32, tops: &[&str]) -> Vec
     let mut seen = vec![start];
     let mut current = start;
     while out.len() < MAX_DEPTH {
-        let Some(proc) = procs.get(&current) else { break };
+        let Some(proc) = procs.get(&current) else {
+            break;
+        };
         let parent = proc.parent;
         if parent == 0 || seen.contains(&parent) {
             break;
@@ -101,8 +160,14 @@ fn ancestors_below(procs: &HashMap<u32, Proc>, start: u32, tops: &[&str]) -> Vec
 /// Windows side walks `ancestors` itself (platform/windows.rs); this states the
 /// rule the tests pin down.
 #[cfg(test)]
-pub fn window_owner(procs: &HashMap<u32, Proc>, start: u32, has_window: impl Fn(u32) -> bool) -> Option<u32> {
-    ancestors_below(procs, start, WINDOWS_TREE_TOPS).into_iter().find(|pid| has_window(*pid))
+pub fn window_owner(
+    procs: &HashMap<u32, Proc>,
+    start: u32,
+    has_window: impl Fn(u32) -> bool,
+) -> Option<u32> {
+    ancestors_below(procs, start, WINDOWS_TREE_TOPS)
+        .into_iter()
+        .find(|pid| has_window(*pid))
 }
 
 /// `/proc/<pid>/stat` → (name, parent). The name sits between the first `(`
@@ -126,7 +191,11 @@ pub fn parse_stat(line: &str) -> Option<(String, u32)> {
 /// bring forward: the windows of the nearest ancestor that has any, and among
 /// them the one titled after the session's folder (see `pick_window`).
 #[cfg_attr(windows, allow(dead_code))]
-pub fn choose_window<'a, W>(ancestors: &[u32], windows: &'a [(W, u32, String)], folder: &str) -> Option<&'a W> {
+pub fn choose_window<'a, W>(
+    ancestors: &[u32],
+    windows: &'a [(W, u32, String)],
+    folder: &str,
+) -> Option<&'a W> {
     ancestors.iter().find_map(|pid| {
         let mine: Vec<(&'a W, String)> = windows
             .iter()
@@ -142,14 +211,21 @@ pub fn choose_window<'a, W>(ancestors: &[u32], windows: &'a [(W, u32, String)], 
 pub fn pick_window<'a, W>(windows: &'a [(W, String)], folder: &str) -> Option<&'a W> {
     let folder = folder.to_lowercase();
     let named = (!folder.is_empty())
-        .then(|| windows.iter().find(|(_, title)| title.to_lowercase().contains(&folder)))
+        .then(|| {
+            windows
+                .iter()
+                .find(|(_, title)| title.to_lowercase().contains(&folder))
+        })
         .flatten();
     named.or_else(|| windows.first()).map(|(w, _)| w)
 }
 
 /// The last folder name of a path, either separator.
 pub fn folder_name(path: &str) -> &str {
-    path.trim_end_matches(['/', '\\']).rsplit(['/', '\\']).next().unwrap_or_default()
+    path.trim_end_matches(['/', '\\'])
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or_default()
 }
 
 // ── Sessions seen so far ──────────────────────────────────────────────────────
@@ -165,7 +241,11 @@ static SESSIONS: Mutex<Vec<(String, Vec<u32>)>> = Mutex::new(Vec::new());
 /// A session ID arrives in a hook payload: only what Claude Code sends (a
 /// UUID) is kept, at most 128 characters.
 fn valid_session(id: &str) -> bool {
-    !id.is_empty() && id.len() <= 128 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    !id.is_empty()
+        && id.len() <= 128
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 pub fn remember(session: &str, mut owners: Vec<u32>) {
@@ -189,11 +269,17 @@ pub fn known(session: &str) -> bool {
 /// The processes that may own the session's window, nearest first, if any.
 pub fn lookup(session: &str) -> Option<Vec<u32>> {
     let list = SESSIONS.lock().unwrap_or_else(|e| e.into_inner());
-    list.iter().find(|(s, _)| s == session).map(|(_, pids)| pids.clone()).filter(|pids| !pids.is_empty())
+    list.iter()
+        .find(|(s, _)| s == session)
+        .map(|(_, pids)| pids.clone())
+        .filter(|pids| !pids.is_empty())
 }
 
 pub fn forget(session: &str) {
-    SESSIONS.lock().unwrap_or_else(|e| e.into_inner()).retain(|(s, _)| s != session);
+    SESSIONS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|(s, _)| s != session);
 }
 
 #[cfg(test)]
@@ -203,7 +289,15 @@ mod tests {
     fn tree(entries: &[(u32, u32, &str)]) -> HashMap<u32, Proc> {
         entries
             .iter()
-            .map(|(pid, parent, exe)| (*pid, Proc { parent: *parent, exe: exe.to_string() }))
+            .map(|(pid, parent, exe)| {
+                (
+                    *pid,
+                    Proc {
+                        parent: *parent,
+                        exe: exe.to_string(),
+                    },
+                )
+            })
             .collect()
     }
 
@@ -219,8 +313,14 @@ mod tests {
             (500, 400, "bash.exe"),
             (600, 500, "coucou-hook.exe"),
         ]);
-        assert_eq!(ancestors_below(&procs, 600, WINDOWS_TREE_TOPS), [500, 400, 300, 200]);
-        assert_eq!(window_owner(&procs, 600, |pid| pid == 200 || pid == 100), Some(200));
+        assert_eq!(
+            ancestors_below(&procs, 600, WINDOWS_TREE_TOPS),
+            [500, 400, 300, 200]
+        );
+        assert_eq!(
+            window_owner(&procs, 600, |pid| pid == 200 || pid == 100),
+            Some(200)
+        );
     }
 
     #[test]
@@ -269,12 +369,21 @@ mod tests {
     #[test]
     fn stat_lines_are_read_around_odd_process_names() {
         let line = "4242 (gnome-terminal-) S 1337 4242 4242 0 -1 4194560 2 0 0 0";
-        assert_eq!(parse_stat(line), Some(("gnome-terminal-".to_string(), 1337)));
+        assert_eq!(
+            parse_stat(line),
+            Some(("gnome-terminal-".to_string(), 1337))
+        );
         // Spaces and parentheses in the name: only the last ')' ends it.
         let odd = "77 (a) b (c) S 12 77 77 34816 77";
         assert_eq!(parse_stat(odd), Some(("a) b (c".to_string(), 12)));
-        assert_eq!(parse_stat("9 (tmux: server) S 1 9 9 0"), Some(("tmux: server".to_string(), 1)));
-        assert_eq!(parse_stat("10 (Web Content) R 8 8 8"), Some(("Web Content".to_string(), 8)));
+        assert_eq!(
+            parse_stat("9 (tmux: server) S 1 9 9 0"),
+            Some(("tmux: server".to_string(), 1))
+        );
+        assert_eq!(
+            parse_stat("10 (Web Content) R 8 8 8"),
+            Some(("Web Content".to_string(), 8))
+        );
         assert_eq!(parse_stat("11 () S 2 0"), Some((String::new(), 2)));
         // Broken or cut short: nothing.
         assert_eq!(parse_stat(""), None);
@@ -325,13 +434,32 @@ mod tests {
     #[test]
     fn linux_walks_end_at_logins_and_session_managers() {
         // Over ssh: nothing above the shell may be raised.
-        let ssh = [(10, 1, "sshd"), (11, 10, "sshd-session"), (12, 11, "bash"), (13, 12, "claude"), (14, 13, "coucou-hook")];
+        let ssh = [
+            (10, 1, "sshd"),
+            (11, 10, "sshd-session"),
+            (12, 11, "bash"),
+            (13, 12, "claude"),
+            (14, 13, "coucou-hook"),
+        ];
         assert_eq!(linux(&ssh), [13, 12]);
         // tmux's server is daemonised under the service manager: no terminal.
-        let tmux = [(5, 1, "systemd"), (6, 5, "tmux: server"), (7, 6, "bash"), (8, 7, "claude"), (9, 8, "coucou-hook")];
+        let tmux = [
+            (5, 1, "systemd"),
+            (6, 5, "tmux: server"),
+            (7, 6, "bash"),
+            (8, 7, "claude"),
+            (9, 8, "coucou-hook"),
+        ];
         assert_eq!(linux(&tmux), [8, 7, 6]);
         // An X session started by hand ends at xinit, names compared lower-cased.
-        let xinit = [(2, 1, "xinit"), (3, 2, "Xorg"), (4, 2, "i3"), (50, 4, "xterm"), (51, 50, "bash"), (52, 51, "coucou-hook")];
+        let xinit = [
+            (2, 1, "xinit"),
+            (3, 2, "Xorg"),
+            (4, 2, "i3"),
+            (50, 4, "xterm"),
+            (51, 50, "bash"),
+            (52, 51, "coucou-hook"),
+        ];
         assert_eq!(linux(&xinit), [51, 50]);
     }
 
@@ -348,14 +476,27 @@ mod tests {
         let windows = vec![
             ("panel", 500, "Panel".to_string()),
             ("notes", 30, "notes — Visual Studio Code".to_string()),
-            ("coucou", 30, "lib.rs — coucou — Visual Studio Code".to_string()),
+            (
+                "coucou",
+                30,
+                "lib.rs — coucou — Visual Studio Code".to_string(),
+            ),
             ("other", 99, "coucou — elsewhere".to_string()),
         ];
         // The shell and node own nothing; VS Code's main process does.
-        assert_eq!(choose_window(&[41, 40, 30, 500], &windows, "coucou"), Some(&"coucou"));
-        assert_eq!(choose_window(&[41, 40, 30], &windows, "missing"), Some(&"notes"));
+        assert_eq!(
+            choose_window(&[41, 40, 30, 500], &windows, "coucou"),
+            Some(&"coucou")
+        );
+        assert_eq!(
+            choose_window(&[41, 40, 30], &windows, "missing"),
+            Some(&"notes")
+        );
         // A nearer ancestor wins even when a farther one's title matches.
-        assert_eq!(choose_window(&[500, 30], &windows, "coucou"), Some(&"panel"));
+        assert_eq!(
+            choose_window(&[500, 30], &windows, "coucou"),
+            Some(&"panel")
+        );
         // A title alone never picks a window of another process.
         assert_eq!(choose_window(&[41, 40], &windows, "coucou"), None);
         assert_eq!(choose_window::<&str>(&[1], &[], "x"), None);

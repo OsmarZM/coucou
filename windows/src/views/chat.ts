@@ -364,12 +364,13 @@ export function buildPrompt(onHeightChange:()=>void):ViewHost {
  const personal=h("button",{class:"tab",text:"Agente local"});
  const el=h("div",{class:"view"},modes,provider.el,agentPanel);
  function select(value:boolean) {
+  if(value && !State.agentRuntimeAvailable) return;
   local=value;
   if(local && !agent) { agent=buildPersonalAgent(onHeightChange); agentPanel.append(agent.el); }
   api.classList.toggle("on",!local); personal.classList.toggle("on",local);
   provider.el.hidden=local; agentPanel.hidden=!local; agent?.setActive(local); onHeightChange();
  }
- api.onclick=()=>select(false); personal.onclick=()=>select(true);
+ api.addEventListener("click",()=>select(false)); personal.addEventListener("click",()=>select(true));
  modes.append(api,personal); select(false);
  return {el,sync(){
   personal.hidden=!State.agentRuntimeAvailable;

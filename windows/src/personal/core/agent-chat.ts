@@ -129,8 +129,8 @@ export class AgentChatStore {
     let chars = 0;
     return ordered.reverse().filter((message) => { chars += message.content.length; return chars <= MAX_VISIBLE_TEXT; }).reverse();
   }
-  applyContextHistory(history: PersonalContextHistory) {
-    if (history.contextId !== PERSONAL_CONTEXT_ID || !Array.isArray(history.messages)) return false;
+  applyContextHistory(history: PersonalContextHistory | null) {
+    if (!history || history.contextId !== PERSONAL_CONTEXT_ID || !Array.isArray(history.messages)) return false;
     this.contextMessages = history.messages.filter((entry) => AGENTS.includes(entry.agent) && ["user", "assistant"].includes(entry.role) && typeof entry.id === "string" && typeof entry.conversationId === "string" && typeof entry.content === "string" && Number.isFinite(entry.createdAt)).slice(-MAX_MESSAGES).map((entry) => ({ id: bounded(entry.id, 128), conversationId: bounded(entry.conversationId, 128), agent: entry.agent, role: entry.role as "user" | "assistant", content: bounded(entry.content, MAX_VISIBLE_TEXT), createdAt: entry.createdAt, contentTruncated: entry.contentTruncated === true }));
     this.contextTruncated = history.truncated === true;
     this.notify(); return true;
@@ -144,7 +144,8 @@ export class AgentChatStore {
     if (sessions.status === "fulfilled") this.adoptPersonalMetadata(sessions.value);
   }
   /** Binding comes from the backend; metadata alone never proves native ownership. */
-  adoptPersonalMetadata(sessions: SessionRecord[]) {
+  adoptPersonalMetadata(sessions: SessionRecord[] | null) {
+    if (!Array.isArray(sessions)) return false;
     let changed = false;
     for (const channel of this.conversations) {
       if (channel.contextId || channel.cwd || channel.runId) continue;

@@ -53,7 +53,12 @@ pub struct ActionDef {
 }
 
 const fn action(id: &'static str, keys: &'static str, on: bool, ported: bool) -> ActionDef {
-    ActionDef { id, default_keys: keys, enabled_by_default: on, ported }
+    ActionDef {
+        id,
+        default_keys: keys,
+        enabled_by_default: on,
+        ported,
+    }
 }
 
 /// Same order as `ShortcutAction.allCases`.
@@ -107,7 +112,10 @@ pub struct Binding {
 
 impl Default for Binding {
     fn default() -> Self {
-        Self { keys: String::new(), enabled: true }
+        Self {
+            keys: String::new(),
+            enabled: true,
+        }
     }
 }
 
@@ -230,13 +238,15 @@ pub fn is_altgr_like(shortcut: &Shortcut) -> bool {
 pub fn character_vk(code: Code) -> Option<u16> {
     use Code::*;
     let letters = [
-        KeyA, KeyB, KeyC, KeyD, KeyE, KeyF, KeyG, KeyH, KeyI, KeyJ, KeyK, KeyL, KeyM, KeyN,
-        KeyO, KeyP, KeyQ, KeyR, KeyS, KeyT, KeyU, KeyV, KeyW, KeyX, KeyY, KeyZ,
+        KeyA, KeyB, KeyC, KeyD, KeyE, KeyF, KeyG, KeyH, KeyI, KeyJ, KeyK, KeyL, KeyM, KeyN, KeyO,
+        KeyP, KeyQ, KeyR, KeyS, KeyT, KeyU, KeyV, KeyW, KeyX, KeyY, KeyZ,
     ];
     if let Some(i) = letters.iter().position(|c| *c == code) {
         return Some(0x41 + i as u16);
     }
-    let digits = [Digit0, Digit1, Digit2, Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9];
+    let digits = [
+        Digit0, Digit1, Digit2, Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9,
+    ];
     if let Some(i) = digits.iter().position(|c| *c == code) {
         return Some(0x30 + i as u16);
     }
@@ -269,7 +279,14 @@ pub fn plan(
     ACTIONS
         .iter()
         .map(|def| {
-            let refuse = |status, typed| Err(ActionStatus { id: def.id, status, typed, trigger: None });
+            let refuse = |status, typed| {
+                Err(ActionStatus {
+                    id: def.id,
+                    status,
+                    typed,
+                    trigger: None,
+                })
+            };
             let binding = effective(def, stored);
             let outcome = if !def.ported {
                 refuse(Status::NotPorted, None)
@@ -310,7 +327,9 @@ pub fn plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
             if event.state != ShortcutState::Pressed {
                 return;
             }
-            let Some(registry) = app.try_state::<Registry>() else { return };
+            let Some(registry) = app.try_state::<Registry>() else {
+                return;
+            };
             let action = registry.by_id.lock().unwrap().get(&shortcut.id()).copied();
             if let Some(action) = action {
                 dispatch(app, action);
@@ -362,9 +381,12 @@ pub fn apply<R: Runtime>(app: &AppHandle<R>, stored: &Bindings) {
     for (def, outcome) in plan {
         let status = match outcome {
             Err(status) => status,
-            Ok(_) if blocked.is_some() || gs.is_none() => {
-                ActionStatus { id: def.id, status: Status::Unsupported, typed: None, trigger: None }
-            }
+            Ok(_) if blocked.is_some() || gs.is_none() => ActionStatus {
+                id: def.id,
+                status: Status::Unsupported,
+                typed: None,
+                trigger: None,
+            },
             Ok(shortcut) => {
                 // No lock of ours is held here: the plugin calls our handler
                 // with its own lock taken, on the thread that registers.
@@ -380,7 +402,12 @@ pub fn apply<R: Runtime>(app: &AppHandle<R>, stored: &Bindings) {
                     }
                     None => Status::Unsupported,
                 };
-                ActionStatus { id: def.id, status, typed: None, trigger: None }
+                ActionStatus {
+                    id: def.id,
+                    status,
+                    typed: None,
+                    trigger: None,
+                }
             }
         };
         report.push(status);
@@ -405,7 +432,10 @@ pub fn suspend<R: Runtime>(app: &AppHandle<R>) {
 
 pub fn status<R: Runtime>(app: &AppHandle<R>) -> Report {
     let registry = app.try_state::<Registry>();
-    let actions = registry.as_ref().map(|r| r.report.lock().unwrap().clone()).unwrap_or_default();
+    let actions = registry
+        .as_ref()
+        .map(|r| r.report.lock().unwrap().clone())
+        .unwrap_or_default();
     let portal = registry.as_ref().and_then(|r| *r.portal.lock().unwrap());
     Report {
         actions,
@@ -453,7 +483,10 @@ mod wayland {
     pub enum Link {
         #[default]
         NotStarted,
-        Running { handle: portal::Handle, gen: u64 },
+        Running {
+            handle: portal::Handle,
+            gen: u64,
+        },
         /// No portal (or no session bus): today's commands instead, for the
         /// rest of the run.
         Gone,
@@ -466,7 +499,9 @@ mod wayland {
         stored: &Bindings,
         plan: &[(&'static ActionDef, Result<Shortcut, ActionStatus>)],
     ) -> bool {
-        let Some(registry) = app.try_state::<Registry>() else { return false };
+        let Some(registry) = app.try_state::<Registry>() else {
+            return false;
+        };
         // Held until the request is sent, so the thread's answer (on_event
         // takes this lock too) always lands after the Pending report below.
         let mut link = registry.wayland.lock().unwrap();
@@ -477,16 +512,21 @@ mod wayland {
             .iter()
             .filter(|(_, outcome)| outcome.is_ok())
             .map(|(def, _)| Wanted {
-                    id: def.id.to_string(),
-                    description: crate::i18n::t(description(def.id)),
-                    trigger: portal::xdg_trigger(&effective(def, stored).keys),
+                id: def.id.to_string(),
+                description: crate::i18n::t(description(def.id)),
+                trigger: portal::xdg_trigger(&effective(def, stored).keys),
             })
             .collect();
         *registry.report.lock().unwrap() = plan
             .iter()
             .map(|(def, outcome)| match outcome {
                 Err(status) => status.clone(),
-                Ok(_) => ActionStatus { id: def.id, status: Status::Pending, typed: None, trigger: None },
+                Ok(_) => ActionStatus {
+                    id: def.id,
+                    status: Status::Pending,
+                    typed: None,
+                    trigger: None,
+                },
             })
             .collect();
         *registry.portal.lock().unwrap() = Some(PortalState::Pending);
@@ -498,7 +538,9 @@ mod wayland {
                 None => Link::Gone,
             };
         }
-        let Link::Running { handle, gen } = &mut *link else { return false };
+        let Link::Running { handle, gen } = &mut *link else {
+            return false;
+        };
         *gen += 1;
         if !handle.bind(*gen, wanted) {
             *link = Link::Gone;
@@ -512,7 +554,9 @@ mod wayland {
     /// Gives the shortcuts back to the desktop while Settings records a new
     /// one; the next `apply` binds them again.
     pub fn release<R: Runtime>(app: &AppHandle<R>) {
-        let Some(registry) = app.try_state::<Registry>() else { return };
+        let Some(registry) = app.try_state::<Registry>() else {
+            return;
+        };
         let mut link = registry.wayland.lock().unwrap();
         if let Link::Running { handle, gen } = &mut *link {
             *gen += 1;
@@ -522,7 +566,9 @@ mod wayland {
 
     /// What the portal thread says. Runs on that thread.
     fn on_event<R: Runtime>(app: &AppHandle<R>, event: Event) {
-        let Some(registry) = app.try_state::<Registry>() else { return };
+        let Some(registry) = app.try_state::<Registry>() else {
+            return;
+        };
         if let Event::Activated(id) = &event {
             if let Some(def) = find(id).filter(|d| d.ported) {
                 dispatch(app, def.id);
@@ -543,9 +589,13 @@ mod wayland {
                     mark_bound(&mut report, shortcuts.as_deref());
                     *portal = Some(PortalState::Active);
                 }
-                Event::Changed { gen, shortcuts } if gen == current => mark_changed(&mut report, &shortcuts),
+                Event::Changed { gen, shortcuts } if gen == current => {
+                    mark_changed(&mut report, &shortcuts)
+                }
                 Event::Failed { gen, reason } if gen == current => {
-                    crate::log::line(format!("shortcuts: the desktop portal didn't take them: {reason}"));
+                    crate::log::line(format!(
+                        "shortcuts: the desktop portal didn't take them: {reason}"
+                    ));
                     mark_failed(&mut report);
                     *portal = None;
                 }
@@ -572,7 +622,10 @@ mod wayland {
         for st in report.iter_mut().filter(|st| handed_over(st.status)) {
             let bound = match shortcuts {
                 None => Some(None),
-                Some(list) => list.iter().find(|b| b.id == st.id).map(|b| b.trigger.clone()),
+                Some(list) => list
+                    .iter()
+                    .find(|b| b.id == st.id)
+                    .map(|b| b.trigger.clone()),
             };
             match bound {
                 Some(trigger) => {
@@ -614,7 +667,12 @@ mod wayland {
                 .into_iter()
                 .map(|(def, outcome)| match outcome {
                     Err(status) => status,
-                    Ok(_) => ActionStatus { id: def.id, status: Status::Pending, typed: None, trigger: None },
+                    Ok(_) => ActionStatus {
+                        id: def.id,
+                        status: Status::Pending,
+                        typed: None,
+                        trigger: None,
+                    },
                 })
                 .collect()
         }
@@ -624,16 +682,25 @@ mod wayland {
         }
 
         fn bound(id: &str, trigger: Option<&str>) -> Bound {
-            Bound { id: id.into(), trigger: trigger.map(str::to_string) }
+            Bound {
+                id: id.into(),
+                trigger: trigger.map(str::to_string),
+            }
         }
 
         #[test]
         fn the_desktop_answer_marks_each_shortcut() {
             let mut r = report();
-            let answer = [bound("openChat", Some("Ctrl+Alt+Space")), bound("goToAlert", None)];
+            let answer = [
+                bound("openChat", Some("Ctrl+Alt+Space")),
+                bound("goToAlert", None),
+            ];
             mark_bound(&mut r, Some(&answer));
             assert_eq!(of(&r, "openChat").status, Status::Active);
-            assert_eq!(of(&r, "openChat").trigger.as_deref(), Some("Ctrl+Alt+Space"));
+            assert_eq!(
+                of(&r, "openChat").trigger.as_deref(),
+                Some("Ctrl+Alt+Space")
+            );
             assert_eq!(of(&r, "goToAlert").status, Status::Active);
             assert_eq!(of(&r, "goToAlert").trigger, None);
             // Left out of the answer.
@@ -648,7 +715,9 @@ mod wayland {
         fn an_answer_without_a_list_takes_them_all() {
             let mut r = report();
             mark_bound(&mut r, None);
-            assert!(r.iter().all(|s| matches!(s.status, Status::Active | Status::Off | Status::NotPorted)));
+            assert!(r
+                .iter()
+                .all(|s| matches!(s.status, Status::Active | Status::Off | Status::NotPorted)));
             assert_eq!(of(&r, "nextPill").status, Status::Active);
         }
 
@@ -656,7 +725,13 @@ mod wayland {
         fn new_keys_from_the_desktop_replace_the_old_ones() {
             let mut r = report();
             mark_bound(&mut r, Some(&[bound("openChat", Some("Ctrl+Alt+Space"))]));
-            mark_changed(&mut r, &[bound("openChat", Some("Meta+C")), bound("muteToggle", Some("Meta+M"))]);
+            mark_changed(
+                &mut r,
+                &[
+                    bound("openChat", Some("Meta+C")),
+                    bound("muteToggle", Some("Meta+M")),
+                ],
+            );
             assert_eq!(of(&r, "openChat").trigger.as_deref(), Some("Meta+C"));
             assert_eq!(of(&r, "muteToggle").status, Status::Active);
             assert_eq!(of(&r, "muteToggle").trigger.as_deref(), Some("Meta+M"));
@@ -669,7 +744,14 @@ mod wayland {
             mark_bound(&mut r, Some(&[bound("openChat", Some("Ctrl+Alt+Space"))]));
             mark_failed(&mut r);
             for s in &r {
-                assert!(matches!(s.status, Status::Unsupported | Status::Off | Status::NotPorted), "{}", s.id);
+                assert!(
+                    matches!(
+                        s.status,
+                        Status::Unsupported | Status::Off | Status::NotPorted
+                    ),
+                    "{}",
+                    s.id
+                );
                 assert_eq!(s.trigger, None);
             }
             assert_eq!(of(&r, "openChat").status, Status::Unsupported);
@@ -689,8 +771,16 @@ mod tests {
     use super::*;
 
     const MAC_IDS: [&str; 10] = [
-        "toggleIsland", "openChat", "goToAlert", "jumpToTerminal", "attachFrontWindow",
-        "nextPill", "prevPill", "muteToggle", "desktopToggle", "wardrobeToggle",
+        "toggleIsland",
+        "openChat",
+        "goToAlert",
+        "jumpToTerminal",
+        "attachFrontWindow",
+        "nextPill",
+        "prevPill",
+        "muteToggle",
+        "desktopToggle",
+        "wardrobeToggle",
     ];
 
     fn never(_: &Shortcut) -> Option<String> {
@@ -710,7 +800,11 @@ mod tests {
         for def in ACTIONS {
             let shortcut = parse(def.default_keys)
                 .unwrap_or_else(|| panic!("{} default does not parse", def.id));
-            assert!(is_altgr_like(&shortcut), "{} default is not Ctrl+Alt", def.id);
+            assert!(
+                is_altgr_like(&shortcut),
+                "{} default is not Ctrl+Alt",
+                def.id
+            );
         }
     }
 
@@ -719,7 +813,11 @@ mod tests {
     fn no_two_defaults_share_a_combination() {
         let mut seen = HashSet::new();
         for def in ACTIONS {
-            assert!(seen.insert(parse(def.default_keys).unwrap().id()), "{} duplicates", def.id);
+            assert!(
+                seen.insert(parse(def.default_keys).unwrap().id()),
+                "{} duplicates",
+                def.id
+            );
         }
     }
 
@@ -727,7 +825,12 @@ mod tests {
     #[test]
     fn only_the_island_toggle_is_off_by_default() {
         for def in ACTIONS {
-            assert_eq!(def.enabled_by_default, def.id != "toggleIsland", "{}", def.id);
+            assert_eq!(
+                def.enabled_by_default,
+                def.id != "toggleIsland",
+                "{}",
+                def.id
+            );
         }
     }
 
@@ -748,7 +851,10 @@ mod tests {
     #[test]
     fn parsing_needs_a_modifier_and_a_known_key() {
         assert!(parse("").is_none());
-        assert!(parse("A").is_none(), "a bare key would take A from every app");
+        assert!(
+            parse("A").is_none(),
+            "a bare key would take A from every app"
+        );
         assert!(parse("Shift+A").is_none(), "so would Shift+A");
         assert!(parse("Ctrl+Escape").is_none());
         assert!(parse("Ctrl+Alt+Nope").is_none());
@@ -758,9 +864,14 @@ mod tests {
         assert!(s.mods.contains(Modifiers::CONTROL | Modifiers::ALT));
         assert!(!s.mods.contains(Modifiers::SHIFT));
         let all = parse("Ctrl+Alt+Shift+Super+K").unwrap();
-        assert!(all.mods.contains(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SHIFT | Modifiers::SUPER));
+        assert!(all
+            .mods
+            .contains(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SHIFT | Modifiers::SUPER));
         // Case and spelling don't change the combination.
-        assert_eq!(parse("ctrl+alt+right").unwrap().id(), parse("Control+Alt+ArrowRight").unwrap().id());
+        assert_eq!(
+            parse("ctrl+alt+right").unwrap().id(),
+            parse("Control+Alt+ArrowRight").unwrap().id()
+        );
     }
 
     #[test]
@@ -787,7 +898,10 @@ mod tests {
     #[test]
     fn a_combination_used_twice_is_registered_once() {
         let mut stored = Bindings::new();
-        let same = Binding { keys: "Ctrl+Alt+A".into(), enabled: true };
+        let same = Binding {
+            keys: "Ctrl+Alt+A".into(),
+            enabled: true,
+        };
         stored.insert("jumpToTerminal".into(), same.clone());
         let plan = plan(&stored, never);
         let alert = plan.iter().find(|(d, _)| d.id == "goToAlert").unwrap();
@@ -796,12 +910,26 @@ mod tests {
         assert_eq!(term.1.as_ref().unwrap_err().status, Status::Duplicate);
 
         // Same key, other modifiers: not a duplicate.
-        stored.insert("jumpToTerminal".into(), Binding { keys: "Ctrl+Shift+A".into(), enabled: true });
+        stored.insert(
+            "jumpToTerminal".into(),
+            Binding {
+                keys: "Ctrl+Shift+A".into(),
+                enabled: true,
+            },
+        );
         let plan = super::plan(&stored, never);
-        assert!(plan.iter().all(|(d, o)| o.is_ok() || !d.ported || d.id == "toggleIsland"));
+        assert!(plan
+            .iter()
+            .all(|(d, o)| o.is_ok() || !d.ported || d.id == "toggleIsland"));
 
         // A disabled action doesn't hold its keys.
-        stored.insert("goToAlert".into(), Binding { keys: "Ctrl+Alt+A".into(), enabled: false });
+        stored.insert(
+            "goToAlert".into(),
+            Binding {
+                keys: "Ctrl+Alt+A".into(),
+                enabled: false,
+            },
+        );
         stored.insert("jumpToTerminal".into(), same);
         let plan = super::plan(&stored, never);
         let term = plan.iter().find(|(d, _)| d.id == "jumpToTerminal").unwrap();
@@ -821,12 +949,30 @@ mod tests {
     #[test]
     fn stored_bindings_override_the_defaults_and_the_rest_fall_back() {
         let mut stored = Bindings::new();
-        stored.insert("openChat".into(), Binding { keys: "Ctrl+Shift+K".into(), enabled: true });
-        stored.insert("muteToggle".into(), Binding { keys: String::new(), enabled: true });
+        stored.insert(
+            "openChat".into(),
+            Binding {
+                keys: "Ctrl+Shift+K".into(),
+                enabled: true,
+            },
+        );
+        stored.insert(
+            "muteToggle".into(),
+            Binding {
+                keys: String::new(),
+                enabled: true,
+            },
+        );
         let chat = effective(find("openChat").unwrap(), &stored);
         assert_eq!(chat.keys, "Ctrl+Shift+K");
         let alert = effective(find("goToAlert").unwrap(), &stored);
-        assert_eq!(alert, Binding { keys: "Ctrl+Alt+A".into(), enabled: true });
+        assert_eq!(
+            alert,
+            Binding {
+                keys: "Ctrl+Alt+A".into(),
+                enabled: true
+            }
+        );
         let toggle = effective(find("toggleIsland").unwrap(), &stored);
         assert!(!toggle.enabled);
         let plan = plan(&stored, never);
@@ -838,24 +984,46 @@ mod tests {
     #[test]
     fn bindings_round_trip_through_json() {
         let mut stored = Bindings::new();
-        stored.insert("openChat".into(), Binding { keys: "Ctrl+Alt+K".into(), enabled: false });
+        stored.insert(
+            "openChat".into(),
+            Binding {
+                keys: "Ctrl+Alt+K".into(),
+                enabled: false,
+            },
+        );
         let json = serde_json::to_string(&stored).unwrap();
-        assert_eq!(json, r#"{"openChat":{"keys":"Ctrl+Alt+K","enabled":false}}"#);
+        assert_eq!(
+            json,
+            r#"{"openChat":{"keys":"Ctrl+Alt+K","enabled":false}}"#
+        );
         assert_eq!(serde_json::from_str::<Bindings>(&json).unwrap(), stored);
         // A hand-edited entry without `enabled` stays on.
-        let partial: Bindings = serde_json::from_str(r#"{"openChat":{"keys":"Ctrl+Alt+K"}}"#).unwrap();
+        let partial: Bindings =
+            serde_json::from_str(r#"{"openChat":{"keys":"Ctrl+Alt+K"}}"#).unwrap();
         assert!(partial["openChat"].enabled);
     }
 
     #[test]
     fn the_command_line_names_an_action() {
         let args = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert_eq!(from_args(&args(&["coucou", "--shortcut", "openChat"])), Some("openChat"));
-        assert_eq!(from_args(&args(&["coucou", "--shortcut", "wardrobeToggle"])), Some("wardrobeToggle"));
+        assert_eq!(
+            from_args(&args(&["coucou", "--shortcut", "openChat"])),
+            Some("openChat")
+        );
+        assert_eq!(
+            from_args(&args(&["coucou", "--shortcut", "wardrobeToggle"])),
+            Some("wardrobeToggle")
+        );
         assert_eq!(from_args(&args(&["coucou", "--shortcut"])), None);
         assert_eq!(from_args(&args(&["coucou", "--shortcut", "rm -rf"])), None);
-        assert_eq!(from_args(&args(&["coucou", "--shortcut", "desktopToggle"])), Some("desktopToggle"));
-        assert_eq!(from_args(&args(&["coucou", "--shortcut", "attachFrontWindow"])), None);
+        assert_eq!(
+            from_args(&args(&["coucou", "--shortcut", "desktopToggle"])),
+            Some("desktopToggle")
+        );
+        assert_eq!(
+            from_args(&args(&["coucou", "--shortcut", "attachFrontWindow"])),
+            None
+        );
         assert_eq!(from_args(&args(&["coucou"])), None);
     }
 }

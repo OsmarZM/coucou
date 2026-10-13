@@ -18,6 +18,13 @@ afterEach(() => mock.timers.reset());
 
 const seconds = (n) => mock.timers.tick(n * 1000);
 
+test("personal compact visibility survives idle time and can return to official auto-hide",()=>{
+  fsm.setVisibilityMode("always");fsm.forcePetit();fsm.mouseLeft();seconds(120);
+  assert.equal(fsm.state,"petit");
+  fsm.setVisibilityMode("autoHide");seconds(60);
+  assert.equal(fsm.state,"hidden");
+});
+
 test("starts hidden and opens on the greeting at launch", () => {
   assert.equal(fsm.state, "hidden");
   fsm.launch();

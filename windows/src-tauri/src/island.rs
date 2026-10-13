@@ -119,7 +119,10 @@ fn monitor_contains(m: &Monitor, x: f64, y: f64) -> bool {
 fn logical_origin(m: &Monitor) -> (i32, i32) {
     let scale = m.scale_factor();
     let p = m.position();
-    ((p.x as f64 / scale).round() as i32, (p.y as f64 / scale).round() as i32)
+    (
+        (p.x as f64 / scale).round() as i32,
+        (p.y as f64 / scale).round() as i32,
+    )
 }
 
 /// One entry of the "Island lives on" list in Settings.
@@ -130,7 +133,9 @@ pub struct MonitorChoice {
 }
 
 pub fn monitor_choices(app: &AppHandle) -> Vec<MonitorChoice> {
-    let Ok(monitors) = app.available_monitors() else { return Vec::new() };
+    let Ok(monitors) = app.available_monitors() else {
+        return Vec::new();
+    };
     monitors
         .iter()
         .map(|m| {
@@ -168,7 +173,14 @@ struct DisplayId {
 impl DisplayId {
     /// `at:<x>,<y>` stays first, so a preference saved before still matches.
     fn key(&self) -> String {
-        format!("at:{},{}|{}|{}x{}", self.x, self.y, self.name.replace('|', " "), self.w, self.h)
+        format!(
+            "at:{},{}|{}|{}x{}",
+            self.x,
+            self.y,
+            self.name.replace('|', " "),
+            self.w,
+            self.h
+        )
     }
 }
 
@@ -205,7 +217,10 @@ fn pick_display(pref: &str, displays: &[DisplayId]) -> Option<usize> {
             return Some(i);
         }
         if let Some((w, h)) = size {
-            if let Some(i) = displays.iter().position(|d| d.name == name && d.w == w && d.h == h) {
+            if let Some(i) = displays
+                .iter()
+                .position(|d| d.name == name && d.w == w && d.h == h)
+            {
                 return Some(i);
             }
         }
@@ -243,7 +258,13 @@ mod display_tests {
     use super::*;
 
     fn d(name: &str, x: i32, y: i32, w: i32, h: i32) -> DisplayId {
-        DisplayId { name: name.into(), x, y, w, h }
+        DisplayId {
+            name: name.into(),
+            x,
+            y,
+            w,
+            h,
+        }
     }
 
     #[test]
@@ -253,7 +274,10 @@ mod display_tests {
         let key = dell.key();
         assert_eq!(pick_display(&key, &[lap.clone(), dell.clone()]), Some(1));
         // Rearranged: the Dell moved to the left of the laptop.
-        let moved = [d("eDP-1", 2560, 0, 1920, 1200), d("DELL U2720Q", 0, 0, 2560, 1440)];
+        let moved = [
+            d("eDP-1", 2560, 0, 1920, 1200),
+            d("DELL U2720Q", 0, 0, 2560, 1440),
+        ];
         assert_eq!(pick_display(&key, &moved), Some(1));
         // Resolution changed, still the only Dell.
         let rescaled = [lap.clone(), d("DELL U2720Q", 1920, 0, 1920, 1080)];
@@ -274,7 +298,10 @@ mod display_tests {
     fn preferences_saved_before_still_match() {
         let lap = d("eDP-1", 0, 0, 1920, 1200);
         let ext = d("HDMI-1", 1920, 0, 1920, 1080);
-        assert_eq!(pick_display("at:1920,0", &[lap.clone(), ext.clone()]), Some(1));
+        assert_eq!(
+            pick_display("at:1920,0", &[lap.clone(), ext.clone()]),
+            Some(1)
+        );
         assert_eq!(pick_display("primary", &[lap, ext]), None);
         assert_eq!(pick_display("at:nonsense", &[]), None);
     }

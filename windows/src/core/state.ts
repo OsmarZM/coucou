@@ -104,6 +104,8 @@ export interface Settings {
   /** Hovering the island opens it all the way (off: hovering only peeks). */
   openOnHover: boolean;
   absenceInterval: number;
+  visibilityMode: "always" | "autoHide";
+  userPinned: boolean;
   /** Declared pills next to the main one (at most 4), in the order they were added. */
   activeIntegrations: string[];
   /** The always-on workspace pill: VS Code, Cursor, Codex or Antigravity. */
@@ -146,6 +148,17 @@ export interface Settings {
    * else English), or one of src/i18n's ten codes ("fr", "pt-BR", "zh-Hans"…).
    */
   language: string;
+  /**
+   * The phone link for Coucou for Android is on. Rust owns it (only the switch in
+   * Settings → Android phone turns it on): whatever the page sends back is ignored.
+   */
+  phoneLink?: boolean;
+  /** The phone may chat through this computer's API keys. Rust owns it too. */
+  phoneChat?: boolean;
+  /** The phone may see session details (steps, last line, folder name, colour). Rust owns it too. */
+  phoneDetails?: boolean;
+  /** Which models the phone may use, "provider/model". Rust owns it too. */
+  phoneChatModels?: string[];
   /** Mochi on the desktop. Rust owns it: whatever the page sends back is ignored. */
   desktopMochi?: {
     onDesktop: boolean;
@@ -159,6 +172,8 @@ export const DEFAULT_SETTINGS: Settings = {
   autoCloseInterval: 15,
   openOnHover: false,
   absenceInterval: 180,
+  visibilityMode: "always",
+  userPinned: false,
   activeIntegrations: [
     "integration_resend", "integration_n8n", "integration_vercel", "integration_github",
   ],
@@ -205,6 +220,7 @@ class AppState {
   isPinned = false;
   paused = false;
   agentRuntimeAvailable = false;
+  personalAgentApproval = false;
 
   uploadProgress = 0;
   uploadDuration = 2.4;

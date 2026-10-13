@@ -11,7 +11,9 @@ use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter};
 
 /// Formats a webview can usually decode, looked for in this order.
-const EXTENSIONS: [&str; 10] = ["wav", "mp3", "ogg", "oga", "m4a", "aac", "flac", "aiff", "aif", "caf"];
+const EXTENSIONS: [&str; 10] = [
+    "wav", "mp3", "ogg", "oga", "m4a", "aac", "flac", "aiff", "aif", "caf",
+];
 /// A sound effect, not an album: anything bigger is left alone.
 const MAX_BYTES: u64 = 8 * 1024 * 1024;
 
@@ -29,23 +31,34 @@ fn custom_file(dir: &Path, name: &str) -> Option<PathBuf> {
     if !valid_name(name) {
         return None;
     }
-    EXTENSIONS.iter().map(|ext| dir.join(format!("{name}.{ext}"))).find(|p| {
-        std::fs::metadata(p).map(|m| m.is_file() && m.len() > 0 && m.len() <= MAX_BYTES).unwrap_or(false)
-    })
+    EXTENSIONS
+        .iter()
+        .map(|ext| dir.join(format!("{name}.{ext}")))
+        .find(|p| {
+            std::fs::metadata(p)
+                .map(|m| m.is_file() && m.len() > 0 && m.len() <= MAX_BYTES)
+                .unwrap_or(false)
+        })
 }
 
 /// Which of `names` have a file of the user's own.
 #[tauri::command]
 pub fn custom_sounds(names: Vec<String>) -> Vec<String> {
     let dir = folder();
-    names.into_iter().filter(|n| custom_file(&dir, n).is_some()).collect()
+    names
+        .into_iter()
+        .filter(|n| custom_file(&dir, n).is_some())
+        .collect()
 }
 
 /// The bytes of the user's file for `name`, sent as they are.
 #[tauri::command]
 pub fn custom_sound(name: String) -> Result<tauri::ipc::Response, String> {
-    let path = custom_file(&folder(), &name).ok_or_else(|| format!("no custom sound for {name}"))?;
-    std::fs::read(&path).map(tauri::ipc::Response::new).map_err(|e| e.to_string())
+    let path =
+        custom_file(&folder(), &name).ok_or_else(|| format!("no custom sound for {name}"))?;
+    std::fs::read(&path)
+        .map(tauri::ipc::Response::new)
+        .map_err(|e| e.to_string())
 }
 
 /// Settings → Open sounds folder: creates it if needed and shows it.

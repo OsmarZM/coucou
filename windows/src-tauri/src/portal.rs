@@ -227,7 +227,10 @@ pub fn session_from_results(results: &PropMap) -> Option<String> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
     /// The desktop holds the shortcuts. `None` when it didn't say which.
-    Bound { gen: u64, shortcuts: Option<Vec<Bound>> },
+    Bound {
+        gen: u64,
+        shortcuts: Option<Vec<Bound>>,
+    },
     /// The user gave some shortcuts other keys.
     Changed { gen: u64, shortcuts: Vec<Bound> },
     /// Refused, failed, or the desktop closed the session.
@@ -325,8 +328,16 @@ fn wait(channel: &Channel, wake: &UnixStream) -> Result<(), String> {
         events |= libc::POLLOUT;
     }
     let mut fds = [
-        libc::pollfd { fd: watch.fd, events, revents: 0 },
-        libc::pollfd { fd: wake.as_raw_fd(), events: libc::POLLIN, revents: 0 },
+        libc::pollfd {
+            fd: watch.fd,
+            events,
+            revents: 0,
+        },
+        libc::pollfd {
+            fd: wake.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        },
     ];
     loop {
         let n = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, -1) };
@@ -344,10 +355,25 @@ fn wait(channel: &Channel, wake: &UnixStream) -> Result<(), String> {
 enum Phase {
     Idle,
     /// CreateSession sent, its Response awaited.
-    Creating { gen: u64, request: String, session: String, want: Vec<Wanted> },
+    Creating {
+        gen: u64,
+        request: String,
+        session: String,
+        want: Vec<Wanted>,
+    },
     /// BindShortcuts sent; the desktop may be showing its dialog.
-    Binding { gen: u64, request: String, session: String, want: Vec<Wanted> },
-    Bound { gen: u64, session: String, want: Vec<Wanted>, shortcuts: Option<Vec<Bound>> },
+    Binding {
+        gen: u64,
+        request: String,
+        session: String,
+        want: Vec<Wanted>,
+    },
+    Bound {
+        gen: u64,
+        session: String,
+        want: Vec<Wanted>,
+        shortcuts: Option<Vec<Bound>>,
+    },
 }
 
 struct Portal {
@@ -359,10 +385,19 @@ struct Portal {
 
 impl Portal {
     fn connect() -> Result<Portal, String> {
-        let mut channel = Channel::get_private(BusType::Session).map_err(|e| format!("session bus: {e}"))?;
+        let mut channel =
+            Channel::get_private(BusType::Session).map_err(|e| format!("session bus: {e}"))?;
         channel.set_watch_enabled(true);
-        let sender = channel.unique_name().ok_or("no unique name on the session bus")?.to_string();
-        let portal = Portal { channel, sender, tokens: 0, phase: Phase::Idle };
+        let sender = channel
+            .unique_name()
+            .ok_or("no unique name on the session bus")?
+            .to_string();
+        let portal = Portal {
+            channel,
+            sender,
+            tokens: 0,
+            phase: Phase::Idle,
+        };
 
         // Names the app to the portal (xdg-desktop-portal 1.19+, apps outside
         // a sandbox). It has to come before any other portal call; an older
@@ -379,10 +414,15 @@ impl Portal {
                 method(OBJECT, "org.freedesktop.DBus.Properties", "Get")?.append2(IFACE, "version"),
             )
             .and_then(|reply| {
-                reply.read1::<Variant<u32>>().map(|v| v.0).map_err(|e| e.to_string())
+                reply
+                    .read1::<Variant<u32>>()
+                    .map(|v| v.0)
+                    .map_err(|e| e.to_string())
             })
             .map_err(|e| format!("no GlobalShortcuts portal: {e}"))?;
-        crate::log::line(format!("shortcuts portal: GlobalShortcuts version {version}"));
+        crate::log::line(format!(
+            "shortcuts portal: GlobalShortcuts version {version}"
+        ));
 
         for rule in [
             format!("type='signal',sender='{DEST}',interface='{IFACE}'"),
@@ -402,9 +442,15 @@ impl Portal {
     }
 
     fn call(&self, msg: Message) -> Result<Message, String> {
-        self.channel.send_with_reply_and_block(msg, CALL_TIMEOUT).map_err(|e| {
-            format!("{}: {}", e.name().unwrap_or("error"), e.message().unwrap_or(""))
-        })
+        self.channel
+            .send_with_reply_and_block(msg, CALL_TIMEOUT)
+            .map_err(|e| {
+                format!(
+                    "{}: {}",
+                    e.name().unwrap_or("error"),
+                    e.message().unwrap_or("")
+                )
+            })
     }
 
     /// A method call we don't wait on (closing a request or a session).
@@ -423,7 +469,9 @@ impl Portal {
     fn gen(&self) -> Option<u64> {
         match &self.phase {
             Phase::Idle => None,
-            Phase::Creating { gen, .. } | Phase::Binding { gen, .. } | Phase::Bound { gen, .. } => Some(*gen),
+            Phase::Creating { gen, .. } | Phase::Binding { gen, .. } | Phase::Bound { gen, .. } => {
+                Some(*gen)
+            }
         }
     }
 
@@ -432,7 +480,12 @@ impl Portal {
     fn abandon(&mut self) {
         match std::mem::replace(&mut self.phase, Phase::Idle) {
             Phase::Idle => {}
-            Phase::Creating { request, session, .. } | Phase::Binding { request, session, .. } => {
+            Phase::Creating {
+                request, session, ..
+            }
+            | Phase::Binding {
+                request, session, ..
+            } => {
                 self.close(&request, REQUEST);
                 self.close(&session, SESSION);
             }
@@ -445,15 +498,27 @@ impl Portal {
             Command::Release => self.abandon(),
             Command::Bind { gen, shortcuts } => {
                 // The same shortcuts as now: nothing to ask the desktop.
-                if let Phase::Bound { gen: current, want, shortcuts: bound, .. } = &mut self.phase {
+                if let Phase::Bound {
+                    gen: current,
+                    want,
+                    shortcuts: bound,
+                    ..
+                } = &mut self.phase
+                {
                     if *want == shortcuts {
                         *current = gen;
-                        return on_event(Event::Bound { gen, shortcuts: bound.clone() });
+                        return on_event(Event::Bound {
+                            gen,
+                            shortcuts: bound.clone(),
+                        });
                     }
                 }
                 self.abandon();
                 if shortcuts.is_empty() {
-                    return on_event(Event::Bound { gen, shortcuts: Some(Vec::new()) });
+                    return on_event(Event::Bound {
+                        gen,
+                        shortcuts: Some(Vec::new()),
+                    });
                 }
                 if let Err(reason) = self.create_session(gen, shortcuts) {
                     on_event(Event::Failed { gen, reason });
@@ -466,8 +531,14 @@ impl Portal {
         let handle_token = self.token();
         let session_token = self.token();
         let mut options = PropMap::new();
-        options.insert("handle_token".into(), Variant(Box::new(handle_token.clone())));
-        options.insert("session_handle_token".into(), Variant(Box::new(session_token.clone())));
+        options.insert(
+            "handle_token".into(),
+            Variant(Box::new(handle_token.clone())),
+        );
+        options.insert(
+            "session_handle_token".into(),
+            Variant(Box::new(session_token.clone())),
+        );
         let reply = self.call(method(OBJECT, IFACE, "CreateSession")?.append1(options))?;
         // An old portal may not follow the token; its answer is the truth.
         let request = reply
@@ -475,27 +546,48 @@ impl Portal {
             .map(|p| p.to_string())
             .unwrap_or_else(|_| request_path(&self.sender, &handle_token));
         let session = session_path(&self.sender, &session_token);
-        self.phase = Phase::Creating { gen, request, session, want };
+        self.phase = Phase::Creating {
+            gen,
+            request,
+            session,
+            want,
+        };
         Ok(())
     }
 
-    fn bind_shortcuts(&mut self, gen: u64, session: String, want: Vec<Wanted>) -> Result<(), String> {
+    fn bind_shortcuts(
+        &mut self,
+        gen: u64,
+        session: String,
+        want: Vec<Wanted>,
+    ) -> Result<(), String> {
         let list: Vec<(String, PropMap)> = want
             .iter()
             .map(|w| {
                 let mut props = PropMap::new();
-                props.insert("description".into(), Variant(Box::new(w.description.clone())));
+                props.insert(
+                    "description".into(),
+                    Variant(Box::new(w.description.clone())),
+                );
                 if let Some(trigger) = &w.trigger {
-                    props.insert("preferred_trigger".into(), Variant(Box::new(trigger.clone())));
+                    props.insert(
+                        "preferred_trigger".into(),
+                        Variant(Box::new(trigger.clone())),
+                    );
                 }
                 (w.id.clone(), props)
             })
             .collect();
         let handle_token = self.token();
         let mut options = PropMap::new();
-        options.insert("handle_token".into(), Variant(Box::new(handle_token.clone())));
+        options.insert(
+            "handle_token".into(),
+            Variant(Box::new(handle_token.clone())),
+        );
         let session_obj = Path::new(session.clone())?;
-        let msg = method(OBJECT, IFACE, "BindShortcuts")?.append3(session_obj, list, "").append1(options);
+        let msg = method(OBJECT, IFACE, "BindShortcuts")?
+            .append3(session_obj, list, "")
+            .append1(options);
         // Bound to the session even if the call fails, so abandon() closes it.
         self.phase = Phase::Binding {
             gen,
@@ -505,7 +597,12 @@ impl Portal {
         };
         let reply = self.call(msg)?;
         if let Ok(path) = reply.read1::<Path>() {
-            self.phase = Phase::Binding { gen, request: path.to_string(), session, want };
+            self.phase = Phase::Binding {
+                gen,
+                request: path.to_string(),
+                session,
+                want,
+            };
         }
         Ok(())
     }
@@ -514,13 +611,16 @@ impl Portal {
         if msg.msg_type() != MessageType::Signal {
             return;
         }
-        let (Some(path), Some(iface), Some(member)) = (msg.path(), msg.interface(), msg.member()) else {
+        let (Some(path), Some(iface), Some(member)) = (msg.path(), msg.interface(), msg.member())
+        else {
             return;
         };
         match (&*iface, &*member) {
             (REQUEST, "Response") => self.response(&path, msg, on_event),
             (IFACE, "Activated") => {
-                let Phase::Bound { session, .. } = &self.phase else { return };
+                let Phase::Bound { session, .. } = &self.phase else {
+                    return;
+                };
                 if let Ok((from, id)) = msg.read2::<Path, String>() {
                     if &*from == session.as_str() {
                         on_event(Event::Activated(id));
@@ -528,7 +628,15 @@ impl Portal {
                 }
             }
             (IFACE, "ShortcutsChanged") => {
-                let Phase::Bound { gen, session, shortcuts, .. } = &mut self.phase else { return };
+                let Phase::Bound {
+                    gen,
+                    session,
+                    shortcuts,
+                    ..
+                } = &mut self.phase
+                else {
+                    return;
+                };
                 let mut args = msg.iter_init();
                 let from: Option<Path> = args.read().ok();
                 if from.as_deref() != Some(session.as_str()) {
@@ -536,18 +644,26 @@ impl Portal {
                 }
                 if let Some(changed) = args.get_refarg().and_then(|a| parse_shortcuts(&*a)) {
                     *shortcuts = Some(changed.clone());
-                    on_event(Event::Changed { gen: *gen, shortcuts: changed });
+                    on_event(Event::Changed {
+                        gen: *gen,
+                        shortcuts: changed,
+                    });
                 }
             }
             (SESSION, "Closed") => {
                 let ours = match &self.phase {
-                    Phase::Binding { session, .. } | Phase::Bound { session, .. } => &*path == session.as_str(),
+                    Phase::Binding { session, .. } | Phase::Bound { session, .. } => {
+                        &*path == session.as_str()
+                    }
                     _ => false,
                 };
                 if ours {
                     let gen = self.gen().unwrap_or_default();
                     self.phase = Phase::Idle;
-                    on_event(Event::Failed { gen, reason: "the desktop closed the session".into() });
+                    on_event(Event::Failed {
+                        gen,
+                        reason: "the desktop closed the session".into(),
+                    });
                 }
             }
             _ => {}
@@ -564,7 +680,9 @@ impl Portal {
         }
         let answer = parse_response(msg);
         match std::mem::replace(&mut self.phase, Phase::Idle) {
-            Phase::Creating { gen, session, want, .. } => {
+            Phase::Creating {
+                gen, session, want, ..
+            } => {
                 let results = match answer {
                     Ok(results) => results,
                     Err(code) => {
@@ -576,18 +694,34 @@ impl Portal {
                 let session = session_from_results(&results).unwrap_or(session);
                 if let Err(reason) = self.bind_shortcuts(gen, session, want) {
                     self.abandon();
-                    on_event(Event::Failed { gen, reason: format!("BindShortcuts: {reason}") });
+                    on_event(Event::Failed {
+                        gen,
+                        reason: format!("BindShortcuts: {reason}"),
+                    });
                 }
             }
-            Phase::Binding { gen, session, want, .. } => match answer {
+            Phase::Binding {
+                gen, session, want, ..
+            } => match answer {
                 Ok(results) => {
-                    let shortcuts = results.get("shortcuts").and_then(|v| parse_shortcuts(&*v.0));
-                    self.phase = Phase::Bound { gen, session, want, shortcuts: shortcuts.clone() };
+                    let shortcuts = results
+                        .get("shortcuts")
+                        .and_then(|v| parse_shortcuts(&*v.0));
+                    self.phase = Phase::Bound {
+                        gen,
+                        session,
+                        want,
+                        shortcuts: shortcuts.clone(),
+                    };
                     on_event(Event::Bound { gen, shortcuts });
                 }
                 Err(code) => {
                     self.close(&session, SESSION);
-                    let reason = if code == 1 { "the user declined".to_string() } else { format!("BindShortcuts answered {code}") };
+                    let reason = if code == 1 {
+                        "the user declined".to_string()
+                    } else {
+                        format!("BindShortcuts answered {code}")
+                    };
                     on_event(Event::Failed { gen, reason });
                 }
             },
@@ -606,25 +740,64 @@ mod tests {
 
     #[test]
     fn coucou_bindings_become_xdg_triggers() {
-        assert_eq!(xdg_trigger("Ctrl+Alt+Space").as_deref(), Some("CTRL+ALT+space"));
+        assert_eq!(
+            xdg_trigger("Ctrl+Alt+Space").as_deref(),
+            Some("CTRL+ALT+space")
+        );
         assert_eq!(xdg_trigger("Ctrl+Alt+A").as_deref(), Some("CTRL+ALT+a"));
-        assert_eq!(xdg_trigger("Ctrl+Alt+Right").as_deref(), Some("CTRL+ALT+Right"));
-        assert_eq!(xdg_trigger("Ctrl+Alt+Left").as_deref(), Some("CTRL+ALT+Left"));
+        assert_eq!(
+            xdg_trigger("Ctrl+Alt+Right").as_deref(),
+            Some("CTRL+ALT+Right")
+        );
+        assert_eq!(
+            xdg_trigger("Ctrl+Alt+Left").as_deref(),
+            Some("CTRL+ALT+Left")
+        );
         assert_eq!(xdg_trigger("Super+A").as_deref(), Some("LOGO+a"));
-        assert_eq!(xdg_trigger("Ctrl+Alt+Shift+Super+K").as_deref(), Some("CTRL+ALT+SHIFT+LOGO+k"));
+        assert_eq!(
+            xdg_trigger("Ctrl+Alt+Shift+Super+K").as_deref(),
+            Some("CTRL+ALT+SHIFT+LOGO+k")
+        );
         assert_eq!(xdg_trigger("Ctrl+Shift+7").as_deref(), Some("CTRL+SHIFT+7"));
         assert_eq!(xdg_trigger("Alt+F5").as_deref(), Some("ALT+F5"));
         assert_eq!(xdg_trigger("Ctrl+F24").as_deref(), Some("CTRL+F24"));
-        assert_eq!(xdg_trigger("Ctrl+Alt+Enter").as_deref(), Some("CTRL+ALT+Return"));
-        assert_eq!(xdg_trigger("Ctrl+Alt+Backspace").as_deref(), Some("CTRL+ALT+BackSpace"));
-        assert_eq!(xdg_trigger("Ctrl+Alt+PageDown").as_deref(), Some("CTRL+ALT+Page_Down"));
-        assert_eq!(xdg_trigger("Ctrl+Alt+BracketLeft").as_deref(), Some("CTRL+ALT+bracketleft"));
-        assert_eq!(xdg_trigger("Ctrl+Alt+Quote").as_deref(), Some("CTRL+ALT+apostrophe"));
-        assert_eq!(xdg_trigger("Ctrl+Alt+Backquote").as_deref(), Some("CTRL+ALT+grave"));
-        assert_eq!(xdg_trigger("Ctrl+Alt+Equal").as_deref(), Some("CTRL+ALT+equal"));
+        assert_eq!(
+            xdg_trigger("Ctrl+Alt+Enter").as_deref(),
+            Some("CTRL+ALT+Return")
+        );
+        assert_eq!(
+            xdg_trigger("Ctrl+Alt+Backspace").as_deref(),
+            Some("CTRL+ALT+BackSpace")
+        );
+        assert_eq!(
+            xdg_trigger("Ctrl+Alt+PageDown").as_deref(),
+            Some("CTRL+ALT+Page_Down")
+        );
+        assert_eq!(
+            xdg_trigger("Ctrl+Alt+BracketLeft").as_deref(),
+            Some("CTRL+ALT+bracketleft")
+        );
+        assert_eq!(
+            xdg_trigger("Ctrl+Alt+Quote").as_deref(),
+            Some("CTRL+ALT+apostrophe")
+        );
+        assert_eq!(
+            xdg_trigger("Ctrl+Alt+Backquote").as_deref(),
+            Some("CTRL+ALT+grave")
+        );
+        assert_eq!(
+            xdg_trigger("Ctrl+Alt+Equal").as_deref(),
+            Some("CTRL+ALT+equal")
+        );
         // Any spelling parse() takes gives the same trigger.
-        assert_eq!(xdg_trigger("control+option+arrowright"), xdg_trigger("Ctrl+Alt+Right"));
-        assert_eq!(xdg_trigger("Ctrl+Alt+Super+T").as_deref(), Some("CTRL+ALT+LOGO+t"));
+        assert_eq!(
+            xdg_trigger("control+option+arrowright"),
+            xdg_trigger("Ctrl+Alt+Right")
+        );
+        assert_eq!(
+            xdg_trigger("Ctrl+Alt+Super+T").as_deref(),
+            Some("CTRL+ALT+LOGO+t")
+        );
     }
 
     #[test]
@@ -646,15 +819,42 @@ mod tests {
         let mut keys: Vec<String> = ('A'..='Z').chain('0'..='9').map(String::from).collect();
         keys.extend((1..=24).map(|n| format!("F{n}")));
         for k in [
-            "Space", "Enter", "Tab", "Backspace", "Delete", "Insert", "Home", "End", "PageUp",
-            "PageDown", "Up", "Down", "Left", "Right", "Comma", "Period", "Slash", "Semicolon",
-            "Quote", "Backquote", "BracketLeft", "BracketRight", "Backslash", "Minus", "Equal",
+            "Space",
+            "Enter",
+            "Tab",
+            "Backspace",
+            "Delete",
+            "Insert",
+            "Home",
+            "End",
+            "PageUp",
+            "PageDown",
+            "Up",
+            "Down",
+            "Left",
+            "Right",
+            "Comma",
+            "Period",
+            "Slash",
+            "Semicolon",
+            "Quote",
+            "Backquote",
+            "BracketLeft",
+            "BracketRight",
+            "Backslash",
+            "Minus",
+            "Equal",
         ] {
             keys.push(k.to_string());
         }
         for key in keys {
             let trigger = xdg_trigger(&format!("Ctrl+Alt+{key}"));
-            assert!(trigger.as_deref().is_some_and(|t| t.starts_with("CTRL+ALT+")), "{key}: {trigger:?}");
+            assert!(
+                trigger
+                    .as_deref()
+                    .is_some_and(|t| t.starts_with("CTRL+ALT+")),
+                "{key}: {trigger:?}"
+            );
         }
     }
 
@@ -672,9 +872,13 @@ mod tests {
 
     /// The Response signal as it comes off the bus.
     fn response(code: u32, results: PropMap) -> Message {
-        let msg = Message::new_signal("/org/freedesktop/portal/desktop/request/1_42/t", REQUEST, "Response")
-            .unwrap()
-            .append2(code, results);
+        let msg = Message::new_signal(
+            "/org/freedesktop/portal/desktop/request/1_42/t",
+            REQUEST,
+            "Response",
+        )
+        .unwrap()
+        .append2(code, results);
         wire(msg)
     }
 
@@ -693,9 +897,15 @@ mod tests {
 
     fn shortcut(id: &str, trigger: Option<&str>) -> (String, PropMap) {
         let mut props = PropMap::new();
-        props.insert("description".into(), Variant(Box::new(format!("{id} description"))));
+        props.insert(
+            "description".into(),
+            Variant(Box::new(format!("{id} description"))),
+        );
         if let Some(t) = trigger {
-            props.insert("trigger_description".into(), Variant(Box::new(t.to_string())));
+            props.insert(
+                "trigger_description".into(),
+                Variant(Box::new(t.to_string())),
+            );
         }
         (id.to_string(), props)
     }
@@ -715,9 +925,18 @@ mod tests {
         assert_eq!(
             parsed,
             vec![
-                Bound { id: "openChat".into(), trigger: Some("Ctrl+Alt+Space".into()) },
-                Bound { id: "goToAlert".into(), trigger: None },
-                Bound { id: "muteToggle".into(), trigger: None },
+                Bound {
+                    id: "openChat".into(),
+                    trigger: Some("Ctrl+Alt+Space".into())
+                },
+                Bound {
+                    id: "goToAlert".into(),
+                    trigger: None
+                },
+                Bound {
+                    id: "muteToggle".into(),
+                    trigger: None
+                },
             ]
         );
     }
@@ -727,7 +946,9 @@ mod tests {
         assert_eq!(parse_response(&response(1, PropMap::new())).unwrap_err(), 1);
         assert_eq!(parse_response(&response(2, PropMap::new())).unwrap_err(), 2);
         // Not a Response at all.
-        let other = Message::new_signal("/x", REQUEST, "Response").unwrap().append1("nope");
+        let other = Message::new_signal("/x", REQUEST, "Response")
+            .unwrap()
+            .append1("nope");
         assert_eq!(parse_response(&other).unwrap_err(), 2);
     }
 
@@ -737,7 +958,10 @@ mod tests {
         let mut as_string = PropMap::new();
         as_string.insert("session_handle".into(), Variant(Box::new(path.to_string())));
         let mut as_path = PropMap::new();
-        as_path.insert("session_handle".into(), Variant(Box::new(Path::new(path).unwrap())));
+        as_path.insert(
+            "session_handle".into(),
+            Variant(Box::new(Path::new(path).unwrap())),
+        );
         for results in [as_string, as_path] {
             let msg = response(0, results);
             let results = parse_response(&msg).unwrap();
@@ -756,7 +980,13 @@ mod tests {
         let mut args = msg.iter_init();
         let _: Path = args.read().unwrap();
         let parsed = parse_shortcuts(&*args.get_refarg().unwrap()).unwrap();
-        assert_eq!(parsed, vec![Bound { id: "nextPill".into(), trigger: Some("Meta+N".into()) }]);
+        assert_eq!(
+            parsed,
+            vec![Bound {
+                id: "nextPill".into(),
+                trigger: Some("Meta+N".into())
+            }]
+        );
         // Not a list: nothing.
         assert_eq!(parse_shortcuts(&"text".to_string()), None);
     }
@@ -772,19 +1002,32 @@ mod tests {
     /// Stops (and gives the name back) once `stop` is set.
     fn fake_portal(ready: mpsc::Sender<()>, stop: std::sync::Arc<std::sync::atomic::AtomicBool>) {
         let ch = Channel::get_private(BusType::Session).unwrap();
-        let name = Message::new_method_call("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "RequestName")
+        let name = Message::new_method_call(
+            "org.freedesktop.DBus",
+            "/org/freedesktop/DBus",
+            "org.freedesktop.DBus",
+            "RequestName",
+        )
+        .unwrap()
+        .append2(DEST, 4u32);
+        let owner: u32 = ch
+            .send_with_reply_and_block(name, CALL_TIMEOUT)
             .unwrap()
-            .append2(DEST, 4u32);
-        let owner: u32 = ch.send_with_reply_and_block(name, CALL_TIMEOUT).unwrap().read1().unwrap();
+            .read1()
+            .unwrap();
         assert_eq!(owner, 1, "the stand-in must own {DEST} on this bus");
         ready.send(()).unwrap();
         let respond = |to: &str, request: &str, code: u32, results: PropMap| {
-            let mut signal = Message::new_signal(request, REQUEST, "Response").unwrap().append2(code, results);
+            let mut signal = Message::new_signal(request, REQUEST, "Response")
+                .unwrap()
+                .append2(code, results);
             signal.set_destination(Some(to.into()));
             ch.send(signal).unwrap();
         };
         while !stop.load(std::sync::atomic::Ordering::Relaxed) {
-            let Ok(Some(msg)) = ch.blocking_pop_message(Duration::from_millis(50)) else { continue };
+            let Ok(Some(msg)) = ch.blocking_pop_message(Duration::from_millis(50)) else {
+                continue;
+            };
             if msg.msg_type() != MessageType::MethodCall {
                 continue;
             }
@@ -796,9 +1039,15 @@ mod tests {
                 }
                 (IFACE, "CreateSession") => {
                     let options: PropMap = msg.read1().unwrap();
-                    let request = request_path(&sender, options["handle_token"].0.as_str().unwrap());
-                    let session = session_path(&sender, options["session_handle_token"].0.as_str().unwrap());
-                    ch.send(msg.method_return().append1(Path::new(request.clone()).unwrap())).unwrap();
+                    let request =
+                        request_path(&sender, options["handle_token"].0.as_str().unwrap());
+                    let session =
+                        session_path(&sender, options["session_handle_token"].0.as_str().unwrap());
+                    ch.send(
+                        msg.method_return()
+                            .append1(Path::new(request.clone()).unwrap()),
+                    )
+                    .unwrap();
                     let mut results = PropMap::new();
                     results.insert("session_handle".into(), Variant(Box::new(session)));
                     respond(&sender, &request, 0, results);
@@ -809,8 +1058,13 @@ mod tests {
                     let list: Vec<(String, PropMap)> = args.read().unwrap();
                     let _parent: String = args.read().unwrap();
                     let options: PropMap = args.read().unwrap();
-                    let request = request_path(&sender, options["handle_token"].0.as_str().unwrap());
-                    ch.send(msg.method_return().append1(Path::new(request.clone()).unwrap())).unwrap();
+                    let request =
+                        request_path(&sender, options["handle_token"].0.as_str().unwrap());
+                    ch.send(
+                        msg.method_return()
+                            .append1(Path::new(request.clone()).unwrap()),
+                    )
+                    .unwrap();
                     if list.iter().any(|(id, _)| id == "refuseMe") {
                         respond(&sender, &request, 1, PropMap::new());
                         continue;
@@ -818,10 +1072,21 @@ mod tests {
                     let bound: Vec<(String, PropMap)> = list
                         .iter()
                         .map(|(id, props)| {
-                            let wanted = props.get("preferred_trigger").and_then(|t| t.0.as_str()).unwrap_or("?");
+                            let wanted = props
+                                .get("preferred_trigger")
+                                .and_then(|t| t.0.as_str())
+                                .unwrap_or("?");
                             let mut out = PropMap::new();
-                            out.insert("description".into(), Variant(Box::new(props["description"].0.as_str().unwrap().to_string())));
-                            out.insert("trigger_description".into(), Variant(Box::new(format!("Fake {wanted}"))));
+                            out.insert(
+                                "description".into(),
+                                Variant(Box::new(
+                                    props["description"].0.as_str().unwrap().to_string(),
+                                )),
+                            );
+                            out.insert(
+                                "trigger_description".into(),
+                                Variant(Box::new(format!("Fake {wanted}"))),
+                            );
                             (id.clone(), out)
                         })
                         .collect();
@@ -845,7 +1110,9 @@ mod tests {
     #[test]
     #[ignore = "needs its own session bus: dbus-run-session -- cargo test -p coucou --lib portal -- --ignored"]
     fn the_whole_exchange_with_a_stand_in_portal() {
-        let recv = |rx: &mpsc::Receiver<Event>| rx.recv_timeout(Duration::from_secs(15)).expect("an event");
+        let recv = |rx: &mpsc::Receiver<Event>| {
+            rx.recv_timeout(Duration::from_secs(15)).expect("an event")
+        };
 
         let (ready_tx, ready_rx) = mpsc::channel();
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -859,26 +1126,58 @@ mod tests {
         let handle = start(move |e| drop(tx.send(e))).unwrap();
         let want = |ids: &[(&str, &str)]| -> Vec<Wanted> {
             ids.iter()
-                .map(|(id, keys)| Wanted { id: id.to_string(), description: format!("{id}!"), trigger: xdg_trigger(keys) })
+                .map(|(id, keys)| Wanted {
+                    id: id.to_string(),
+                    description: format!("{id}!"),
+                    trigger: xdg_trigger(keys),
+                })
                 .collect()
         };
         let bound = |ids: &[(&str, &str)]| -> Option<Vec<Bound>> {
-            Some(ids.iter().map(|(id, t)| Bound { id: id.to_string(), trigger: Some(t.to_string()) }).collect())
+            Some(
+                ids.iter()
+                    .map(|(id, t)| Bound {
+                        id: id.to_string(),
+                        trigger: Some(t.to_string()),
+                    })
+                    .collect(),
+            )
         };
 
         let first = want(&[("openChat", "Ctrl+Alt+Space"), ("goToAlert", "Ctrl+Alt+A")]);
         assert!(handle.bind(1, first.clone()));
-        let answer = bound(&[("openChat", "Fake CTRL+ALT+space"), ("goToAlert", "Fake CTRL+ALT+a")]);
-        assert_eq!(recv(&rx), Event::Bound { gen: 1, shortcuts: answer.clone() });
+        let answer = bound(&[
+            ("openChat", "Fake CTRL+ALT+space"),
+            ("goToAlert", "Fake CTRL+ALT+a"),
+        ]);
+        assert_eq!(
+            recv(&rx),
+            Event::Bound {
+                gen: 1,
+                shortcuts: answer.clone()
+            }
+        );
         assert_eq!(recv(&rx), Event::Activated("openChat".into()));
 
         // The same shortcuts again: answered at once, the desktop isn't asked.
         assert!(handle.bind(2, first));
-        assert_eq!(recv(&rx), Event::Bound { gen: 2, shortcuts: answer });
+        assert_eq!(
+            recv(&rx),
+            Event::Bound {
+                gen: 2,
+                shortcuts: answer
+            }
+        );
 
         // Other shortcuts: a new session.
         assert!(handle.bind(3, want(&[("muteToggle", "Super+M")])));
-        assert_eq!(recv(&rx), Event::Bound { gen: 3, shortcuts: bound(&[("muteToggle", "Fake LOGO+m")]) });
+        assert_eq!(
+            recv(&rx),
+            Event::Bound {
+                gen: 3,
+                shortcuts: bound(&[("muteToggle", "Fake LOGO+m")])
+            }
+        );
         assert_eq!(recv(&rx), Event::Activated("muteToggle".into()));
 
         // Refused in the desktop's dialog.
@@ -888,9 +1187,18 @@ mod tests {
         // Released, then bound again from nothing.
         assert!(handle.release());
         assert!(handle.bind(5, want(&[("nextPill", "Ctrl+Alt+Right")])));
-        assert_eq!(recv(&rx), Event::Bound { gen: 5, shortcuts: bound(&[("nextPill", "Fake CTRL+ALT+Right")]) });
+        assert_eq!(
+            recv(&rx),
+            Event::Bound {
+                gen: 5,
+                shortcuts: bound(&[("nextPill", "Fake CTRL+ALT+Right")])
+            }
+        );
         assert_eq!(recv(&rx), Event::Activated("nextPill".into()));
-        assert!(rx.recv_timeout(Duration::from_millis(200)).is_err(), "nothing more");
+        assert!(
+            rx.recv_timeout(Duration::from_millis(200)).is_err(),
+            "nothing more"
+        );
 
         // No GlobalShortcuts portal on the bus (none at all, or one without
         // that interface): Unavailable, and the thread is gone.

@@ -3,6 +3,7 @@
 // `npm run dev` alone.
 
 import { State as OfficialState } from "../../core/state";
+import { mergePersonalPreferences } from "./preferences";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -38,7 +39,7 @@ export const Bridge = {
   boot: () => call<BootInfo>("boot"),
 
   saveSettings: (settings: Settings) => {
- const merged = { ...OfficialState.settings, ...settings };
+ const merged = mergePersonalPreferences(OfficialState.settings, settings);
  OfficialState.settings = merged;
  return call<void>("save_settings", { settings: merged });
  },

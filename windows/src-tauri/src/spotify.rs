@@ -148,7 +148,11 @@ impl PlayerState {
     /// Where playback is at `now_ms`, extrapolated from the last anchor and
     /// capped at the track's end (SpotifyController.position(at:)).
     pub fn position_at_time(&self, now_ms: f64) -> f64 {
-        let elapsed = if self.playing { ((now_ms - self.position_at) / 1000.0).max(0.0) } else { 0.0 };
+        let elapsed = if self.playing {
+            ((now_ms - self.position_at) / 1000.0).max(0.0)
+        } else {
+            0.0
+        };
         let p = self.position + elapsed;
         match &self.track {
             Some(t) if t.duration > 0.0 => p.min(t.duration),
@@ -248,8 +252,12 @@ impl PlayerState {
 
 /// xesam / mpris metadata → the track, or None when nothing is loaded.
 pub fn parse_metadata(map: &[(String, Value)]) -> Option<Track> {
-    let object_path = find(map, "mpris:trackid").map(Value::text).unwrap_or_default();
-    let title = find(map, "xesam:title").map(Value::text).unwrap_or_default();
+    let object_path = find(map, "mpris:trackid")
+        .map(Value::text)
+        .unwrap_or_default();
+    let title = find(map, "xesam:title")
+        .map(Value::text)
+        .unwrap_or_default();
     if object_path.is_empty() && title.is_empty() {
         return None;
     }
@@ -261,13 +269,24 @@ pub fn parse_metadata(map: &[(String, Value)]) -> Option<Track> {
         .and_then(Value::int)
         .map(|us| us.max(0) as f64 / 1_000_000.0)
         .unwrap_or(0.0);
-    let art_url = find(map, "mpris:artUrl").map(Value::text).filter(|s| !s.is_empty());
-    let id = spotify_id(&object_path, find(map, "xesam:url").map(Value::text).as_deref());
+    let art_url = find(map, "mpris:artUrl")
+        .map(Value::text)
+        .filter(|s| !s.is_empty());
+    let id = spotify_id(
+        &object_path,
+        find(map, "xesam:url").map(Value::text).as_deref(),
+    );
     Some(Track {
         id,
         title: short_title(&title),
-        artist: short_artist(&find(map, "xesam:artist").map(Value::text).unwrap_or_default()),
-        album: find(map, "xesam:album").map(Value::text).unwrap_or_default(),
+        artist: short_artist(
+            &find(map, "xesam:artist")
+                .map(Value::text)
+                .unwrap_or_default(),
+        ),
+        album: find(map, "xesam:album")
+            .map(Value::text)
+            .unwrap_or_default(),
         duration,
         art_url,
         object_path,
@@ -319,7 +338,11 @@ pub fn short_title(raw: &str) -> String {
         s = candidate;
     }
     let result = s.trim();
-    if result.is_empty() { raw.to_string() } else { result.to_string() }
+    if result.is_empty() {
+        raw.to_string()
+    } else {
+        result.to_string()
+    }
 }
 
 /// "Artist feat. Someone" → "Artist" (SpotifyController.shortArtist).
@@ -333,7 +356,11 @@ pub fn short_artist(raw: &str) -> String {
             // Lowercasing can move byte offsets; only cut where it lines up.
             if lower.len() == raw.len() && raw.is_char_boundary(i) {
                 let result = raw[..i].trim();
-                return if result.is_empty() { raw.to_string() } else { result.to_string() };
+                return if result.is_empty() {
+                    raw.to_string()
+                } else {
+                    result.to_string()
+                };
             }
         }
     }
@@ -361,11 +388,17 @@ pub fn artwork_source(raw: &str) -> Option<ArtSource> {
     match url.scheme() {
         "https" => {
             let host = url.host_str()?.to_ascii_lowercase();
-            let ours = host == "i.scdn.co" || host.ends_with(".scdn.co") || host.ends_with(".spotifycdn.com");
-            (ours && url.port().is_none() && url.username().is_empty()).then(|| ArtSource::Https(url.to_string()))
+            let ours = host == "i.scdn.co"
+                || host.ends_with(".scdn.co")
+                || host.ends_with(".spotifycdn.com");
+            (ours && url.port().is_none() && url.username().is_empty())
+                .then(|| ArtSource::Https(url.to_string()))
         }
         "file" => {
-            if url.host_str().is_some_and(|h| !h.is_empty() && h != "localhost") {
+            if url
+                .host_str()
+                .is_some_and(|h| !h.is_empty() && h != "localhost")
+            {
                 return None;
             }
             let path = url.to_file_path().ok()?;
@@ -392,7 +425,10 @@ pub fn sniff_image(bytes: &[u8]) -> Option<&'static str> {
 
 fn data_url(bytes: &[u8]) -> Option<String> {
     let mime = sniff_image(bytes)?;
-    Some(format!("data:{mime};base64,{}", crate::claude::base64_for(bytes)))
+    Some(format!(
+        "data:{mime};base64,{}",
+        crate::claude::base64_for(bytes)
+    ))
 }
 
 #[derive(Serialize, Clone)]
@@ -422,7 +458,10 @@ fn emit_state(app: &AppHandle, state: &PlayerState) {
 pub async fn spotify_refresh(app: AppHandle) -> Option<PlayerState> {
     #[cfg(target_os = "linux")]
     {
-        tauri::async_runtime::spawn_blocking(move || linux::refresh(&linux::Out::App(app))).await.ok().flatten()
+        tauri::async_runtime::spawn_blocking(move || linux::refresh(&linux::Out::App(app)))
+            .await
+            .ok()
+            .flatten()
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -437,7 +476,11 @@ pub async fn spotify_refresh(app: AppHandle) -> Option<PlayerState> {
 pub async fn spotify_control(app: AppHandle, action: String, value: Option<f64>) -> bool {
     #[cfg(target_os = "linux")]
     {
-        tauri::async_runtime::spawn_blocking(move || linux::control(&linux::Out::App(app), &action, value)).await.unwrap_or(false)
+        tauri::async_runtime::spawn_blocking(move || {
+            linux::control(&linux::Out::App(app), &action, value)
+        })
+        .await
+        .unwrap_or(false)
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -452,7 +495,9 @@ pub async fn spotify_control(app: AppHandle, action: String, value: Option<f64>)
 pub async fn spotify_open() -> bool {
     #[cfg(target_os = "linux")]
     {
-        tauri::async_runtime::spawn_blocking(linux::open).await.unwrap_or(false)
+        tauri::async_runtime::spawn_blocking(linux::open)
+            .await
+            .unwrap_or(false)
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -530,7 +575,13 @@ mod linux {
     }
 
     static SHARED: LazyLock<Mutex<Shared>> = LazyLock::new(|| {
-        Mutex::new(Shared { generation: 0, active: false, listener: None, owner: None, state: PlayerState::default() })
+        Mutex::new(Shared {
+            generation: 0,
+            active: false,
+            listener: None,
+            owner: None,
+            state: PlayerState::default(),
+        })
     });
 
     /// The connection the controls and reads go through, made on first use.
@@ -541,8 +592,12 @@ mod linux {
         loading: Option<String>,
     }
 
-    static ART: LazyLock<Mutex<ArtCache>> =
-        LazyLock::new(|| Mutex::new(ArtCache { entries: VecDeque::new(), loading: None }));
+    static ART: LazyLock<Mutex<ArtCache>> = LazyLock::new(|| {
+        Mutex::new(ArtCache {
+            entries: VecDeque::new(),
+            loading: None,
+        })
+    });
 
     /// Where the listener's news goes: the island, or a test.
     #[derive(Clone)]
@@ -572,18 +627,33 @@ mod linux {
     /// A D-Bus argument as a plain Value (variants unwrapped).
     pub fn value_of(arg: &dyn RefArg) -> Value {
         match arg.arg_type() {
-            ArgType::Variant => arg.as_iter().and_then(|mut it| it.next().map(value_of)).unwrap_or(Value::Other),
-            ArgType::String | ArgType::ObjectPath | ArgType::Signature => {
-                arg.as_str().map(|s| Value::Str(s.to_string())).unwrap_or(Value::Other)
-            }
-            ArgType::Boolean => arg.as_i64().map(|n| Value::Bool(n != 0)).unwrap_or(Value::Other),
+            ArgType::Variant => arg
+                .as_iter()
+                .and_then(|mut it| it.next().map(value_of))
+                .unwrap_or(Value::Other),
+            ArgType::String | ArgType::ObjectPath | ArgType::Signature => arg
+                .as_str()
+                .map(|s| Value::Str(s.to_string()))
+                .unwrap_or(Value::Other),
+            ArgType::Boolean => arg
+                .as_i64()
+                .map(|n| Value::Bool(n != 0))
+                .unwrap_or(Value::Other),
             ArgType::Double => arg.as_f64().map(Value::Float).unwrap_or(Value::Other),
-            ArgType::UInt64 => arg.as_u64().map(|n| Value::Int(n.min(i64::MAX as u64) as i64)).unwrap_or(Value::Other),
-            ArgType::Byte | ArgType::Int16 | ArgType::UInt16 | ArgType::Int32 | ArgType::UInt32 | ArgType::Int64 => {
-                arg.as_i64().map(Value::Int).unwrap_or(Value::Other)
-            }
+            ArgType::UInt64 => arg
+                .as_u64()
+                .map(|n| Value::Int(n.min(i64::MAX as u64) as i64))
+                .unwrap_or(Value::Other),
+            ArgType::Byte
+            | ArgType::Int16
+            | ArgType::UInt16
+            | ArgType::Int32
+            | ArgType::UInt32
+            | ArgType::Int64 => arg.as_i64().map(Value::Int).unwrap_or(Value::Other),
             ArgType::Array => {
-                let Some(items) = arg.as_iter() else { return Value::Other };
+                let Some(items) = arg.as_iter() else {
+                    return Value::Other;
+                };
                 if arg.signature().starts_with("a{") {
                     let mut map = Vec::new();
                     let mut items = items;
@@ -609,7 +679,9 @@ mod linux {
     }
 
     pub fn props_of(map: &PropMap) -> Vec<(String, Value)> {
-        map.iter().map(|(k, v)| (k.clone(), value_of(&v.0))).collect()
+        map.iter()
+            .map(|(k, v)| (k.clone(), value_of(&v.0)))
+            .collect()
     }
 
     // ── Start / stop ──────────────────────────────────────────────────────────
@@ -627,7 +699,10 @@ mod linux {
             s.active = on;
             s.generation += 1;
             s.owner = None;
-            s.state = PlayerState { installed: installed(), ..PlayerState::default() };
+            s.state = PlayerState {
+                installed: installed(),
+                ..PlayerState::default()
+            };
             s.listener.take()
         };
         if on {
@@ -654,7 +729,10 @@ mod linux {
 
     /// Any message to its unique name gets the listener off the bus.
     fn wake_listener(name: &str) {
-        let Ok(msg) = Message::new_method_call(name, "/", "org.freedesktop.DBus.Peer", "Ping") else { return };
+        let Ok(msg) = Message::new_method_call(name, "/", "org.freedesktop.DBus.Peer", "Ping")
+        else {
+            return;
+        };
         let mut msg = msg;
         msg.set_no_reply(true);
         with_control(|c| {
@@ -721,7 +799,9 @@ mod linux {
 
         match (interface.as_str(), member.as_str()) {
             (DBUS, "NameOwnerChanged") => {
-                let Ok((name, _old, new)) = msg.read3::<String, String, String>() else { return };
+                let Ok((name, _old, new)) = msg.read3::<String, String, String>() else {
+                    return;
+                };
                 if name != BUS {
                     return;
                 }
@@ -743,7 +823,10 @@ mod linux {
                 if !from_owner(sender.as_deref()) {
                     return;
                 }
-                let Ok((iface, changed, invalidated)) = msg.read3::<String, PropMap, Vec<String>>() else { return };
+                let Ok((iface, changed, invalidated)) = msg.read3::<String, PropMap, Vec<String>>()
+                else {
+                    return;
+                };
                 if iface != PLAYER {
                     return;
                 }
@@ -783,7 +866,11 @@ mod linux {
         let applied = SHARED.lock().unwrap().state.apply(props, now_ms());
         if (applied.status_changed || applied.track_changed) && !applied.position_set {
             if let Some(position) = get_property(conn, "Position") {
-                SHARED.lock().unwrap().state.apply(&[("Position".into(), position)], now_ms());
+                SHARED
+                    .lock()
+                    .unwrap()
+                    .state
+                    .apply(&[("Position".into(), position)], now_ms());
             }
         }
         let state = SHARED.lock().unwrap().state.clone();
@@ -895,7 +982,9 @@ mod linux {
                 "next" => p.method_call(PLAYER, "Next", ()),
                 "previous" => p.method_call(PLAYER, "Previous", ()),
                 "seek" => {
-                    let Some(track) = state.track.as_ref() else { return Err(dbus::Error::new_failed("no track")) };
+                    let Some(track) = state.track.as_ref() else {
+                        return Err(dbus::Error::new_failed("no track"));
+                    };
                     let target = v.clamp(0.0, (track.duration - 1.0).max(0.0));
                     let target_us = (target * 1_000_000.0) as i64;
                     match dbus::Path::new(track.object_path.clone()) {
@@ -908,7 +997,11 @@ mod linux {
                     }
                 }
                 "shuffle" => p.set(PLAYER, "Shuffle", v != 0.0),
-                "repeat" => p.set(PLAYER, "LoopStatus", if v != 0.0 { "Playlist" } else { "None" }),
+                "repeat" => p.set(
+                    PLAYER,
+                    "LoopStatus",
+                    if v != 0.0 { "Playlist" } else { "None" },
+                ),
                 "volume" => p.set(PLAYER, "Volume", (v / 100.0).clamp(0.0, 1.0)),
                 _ => Err(dbus::Error::new_failed("unknown action")),
             }
@@ -924,7 +1017,10 @@ mod linux {
                 ("Position".into(), Value::Int((target * 1_000_000.0) as i64))
             }),
             "shuffle" => Some(("Shuffle".into(), Value::Bool(v != 0.0))),
-            "repeat" => Some(("LoopStatus".into(), Value::Str(if v != 0.0 { "Playlist" } else { "None" }.into()))),
+            "repeat" => Some((
+                "LoopStatus".into(),
+                Value::Str(if v != 0.0 { "Playlist" } else { "None" }.into()),
+            )),
             "volume" => Some(("Volume".into(), Value::Float((v / 100.0).clamp(0.0, 1.0)))),
             _ => None,
         };
@@ -1015,14 +1111,19 @@ mod linux {
     /// The current track's cover, as a data URL: the page may not load a remote
     /// image (CSP), and only Spotify's CDN or a local file is read.
     fn want_artwork(app: &AppHandle, state: &PlayerState) {
-        let Some(url) = state.track.as_ref().and_then(|t| t.art_url.clone()) else { return };
+        let Some(url) = state.track.as_ref().and_then(|t| t.art_url.clone()) else {
+            return;
+        };
         {
             let mut art = ART.lock().unwrap();
             if let Some((_, data)) = art.entries.iter().find(|(u, _)| *u == url) {
                 let _ = app.emit_to(
                     crate::island::WINDOW_LABEL,
                     ARTWORK_EVENT,
-                    Artwork { art_url: url.clone(), data_url: data.clone() },
+                    Artwork {
+                        art_url: url.clone(),
+                        data_url: data.clone(),
+                    },
                 );
                 return;
             }
@@ -1086,9 +1187,22 @@ mod linux {
         }
         drop(art);
         // Only if it is still the track on screen.
-        let current = SHARED.lock().unwrap().state.track.as_ref().and_then(|t| t.art_url.clone());
+        let current = SHARED
+            .lock()
+            .unwrap()
+            .state
+            .track
+            .as_ref()
+            .and_then(|t| t.art_url.clone());
         if current.as_deref() == Some(url.as_str()) {
-            let _ = app.emit_to(crate::island::WINDOW_LABEL, ARTWORK_EVENT, Artwork { art_url: url, data_url: data });
+            let _ = app.emit_to(
+                crate::island::WINDOW_LABEL,
+                ARTWORK_EVENT,
+                Artwork {
+                    art_url: url,
+                    data_url: data,
+                },
+            );
         }
     }
 
@@ -1106,7 +1220,10 @@ mod linux {
 
         #[test]
         fn dbus_variants_become_plain_values() {
-            assert_eq!(value_of(&var("Playing".to_string())), Value::Str("Playing".into()));
+            assert_eq!(
+                value_of(&var("Playing".to_string())),
+                Value::Str("Playing".into())
+            );
             assert_eq!(value_of(&var(true)), Value::Bool(true));
             assert_eq!(value_of(&var(0.5f64)), Value::Float(0.5));
             assert_eq!(value_of(&var(42u64)), Value::Int(42));
@@ -1126,13 +1243,28 @@ mod linux {
         fn spotify_metadata_from_the_bus_parses_into_a_track() {
             // What Spotify 1.2 sends, types included.
             let mut meta: PropMap = HashMap::new();
-            meta.insert("mpris:trackid".into(), var(dbus::Path::new("/com/spotify/track/4uLU6hMCjMI75M1A2tKUQC").unwrap()));
+            meta.insert(
+                "mpris:trackid".into(),
+                var(dbus::Path::new("/com/spotify/track/4uLU6hMCjMI75M1A2tKUQC").unwrap()),
+            );
             meta.insert("mpris:length".into(), var(213_000_000u64));
-            meta.insert("mpris:artUrl".into(), var("https://i.scdn.co/image/ab67616d0000b273abc".to_string()));
-            meta.insert("xesam:title".into(), var("Never Gonna Give You Up - Remastered 2022".to_string()));
+            meta.insert(
+                "mpris:artUrl".into(),
+                var("https://i.scdn.co/image/ab67616d0000b273abc".to_string()),
+            );
+            meta.insert(
+                "xesam:title".into(),
+                var("Never Gonna Give You Up - Remastered 2022".to_string()),
+            );
             meta.insert("xesam:artist".into(), var(vec!["Rick Astley".to_string()]));
-            meta.insert("xesam:album".into(), var("Whenever You Need Somebody".to_string()));
-            meta.insert("xesam:url".into(), var("https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC".to_string()));
+            meta.insert(
+                "xesam:album".into(),
+                var("Whenever You Need Somebody".to_string()),
+            );
+            meta.insert(
+                "xesam:url".into(),
+                var("https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC".to_string()),
+            );
             let mut props: PropMap = HashMap::new();
             props.insert("Metadata".into(), var(meta));
             props.insert("PlaybackStatus".into(), var("Playing".to_string()));
@@ -1150,8 +1282,14 @@ mod linux {
             assert_eq!(track.artist, "Rick Astley");
             assert_eq!(track.album, "Whenever You Need Somebody");
             assert_eq!(track.duration, 213.0);
-            assert_eq!(track.art_url.as_deref(), Some("https://i.scdn.co/image/ab67616d0000b273abc"));
-            assert_eq!(track.object_path, "/com/spotify/track/4uLU6hMCjMI75M1A2tKUQC");
+            assert_eq!(
+                track.art_url.as_deref(),
+                Some("https://i.scdn.co/image/ab67616d0000b273abc")
+            );
+            assert_eq!(
+                track.object_path,
+                "/com/spotify/track/4uLU6hMCjMI75M1A2tKUQC"
+            );
             assert!(state.playing && state.shuffle && state.repeat);
             assert_eq!(state.volume, 42);
             assert_eq!(state.position, 12.5);
@@ -1174,7 +1312,10 @@ mod linux {
 
             let (tx, rx) = std::sync::mpsc::channel();
             let out = Out::Test(tx);
-            let next = || rx.recv_timeout(Duration::from_secs(3)).expect("a state from the listener");
+            let next = || {
+                rx.recv_timeout(Duration::from_secs(3))
+                    .expect("a state from the listener")
+            };
 
             // Declared: the listener reads what is already playing.
             set_active(out.clone(), true);
@@ -1205,7 +1346,12 @@ mod linux {
             assert!(!control(&out, "dance", None));
             assert_eq!(
                 *calls.lock().unwrap(),
-                vec!["PlayPause", "SetPosition /com/spotify/track/fake1 60000000", "Set Shuffle", "Set Volume"]
+                vec![
+                    "PlayPause",
+                    "SetPosition /com/spotify/track/fake1 60000000",
+                    "Set Shuffle",
+                    "Set Volume"
+                ]
             );
 
             // Spotify quits: nothing plays any more.
@@ -1236,20 +1382,34 @@ mod linux {
             let mut position: i64 = 30_000_000;
             let player = |playing: bool, position: i64| {
                 let mut meta: PropMap = HashMap::new();
-                meta.insert("mpris:trackid".into(), var(dbus::Path::new("/com/spotify/track/fake1").unwrap()));
+                meta.insert(
+                    "mpris:trackid".into(),
+                    var(dbus::Path::new("/com/spotify/track/fake1").unwrap()),
+                );
                 meta.insert("mpris:length".into(), var(180_000_000u64));
                 meta.insert("xesam:title".into(), var("Fake Song (Live)".to_string()));
-                meta.insert("xesam:artist".into(), var(vec!["Fake Artist".to_string(), "Guest".to_string()]));
+                meta.insert(
+                    "xesam:artist".into(),
+                    var(vec!["Fake Artist".to_string(), "Guest".to_string()]),
+                );
                 meta.insert("xesam:album".into(), var("Fake Album".to_string()));
                 let mut props: PropMap = HashMap::new();
                 props.insert("Metadata".into(), var(meta));
-                props.insert("PlaybackStatus".into(), var(if playing { "Playing" } else { "Paused" }.to_string()));
+                props.insert(
+                    "PlaybackStatus".into(),
+                    var(if playing { "Playing" } else { "Paused" }.to_string()),
+                );
                 props.insert("Volume".into(), var(0.8f64));
                 props.insert("Position".into(), var(position));
                 props
             };
             while !stop.load(Ordering::Relaxed) {
-                let Ok(Some(msg)) = conn.channel().blocking_pop_message(Duration::from_millis(50)) else { continue };
+                let Ok(Some(msg)) = conn
+                    .channel()
+                    .blocking_pop_message(Duration::from_millis(50))
+                else {
+                    continue;
+                };
                 if msg.msg_type() != MessageType::MethodCall {
                     continue;
                 }
@@ -1276,7 +1436,10 @@ mod linux {
                     }
                     "SetPosition" => {
                         let (path, us): (dbus::Path, i64) = msg.read2().unwrap();
-                        calls.lock().unwrap().push(format!("SetPosition {path} {us}"));
+                        calls
+                            .lock()
+                            .unwrap()
+                            .push(format!("SetPosition {path} {us}"));
                         position = us;
                         msg.method_return()
                     }
@@ -1330,7 +1493,10 @@ mod tests {
         Value::Map(vec![
             ("mpris:trackid".into(), s(trackid)),
             ("xesam:title".into(), s(title)),
-            ("xesam:artist".into(), Value::Strs(vec!["Daft Punk".into(), "Pharrell Williams".into()])),
+            (
+                "xesam:artist".into(),
+                Value::Strs(vec!["Daft Punk".into(), "Pharrell Williams".into()]),
+            ),
             ("xesam:album".into(), s("Random Access Memories")),
             ("mpris:length".into(), Value::Int(369_000_000)),
             ("mpris:artUrl".into(), s("https://i.scdn.co/image/abc")),
@@ -1351,12 +1517,21 @@ mod tests {
 
     #[test]
     fn mpris_track_ids_become_spotify_ids() {
-        assert_eq!(spotify_id("/com/spotify/track/ABC", None), "spotify:track:ABC");
-        assert_eq!(spotify_id("/com/spotify/episode/XYZ", None), "spotify:episode:XYZ");
+        assert_eq!(
+            spotify_id("/com/spotify/track/ABC", None),
+            "spotify:track:ABC"
+        );
+        assert_eq!(
+            spotify_id("/com/spotify/episode/XYZ", None),
+            "spotify:episode:XYZ"
+        );
         assert_eq!(spotify_id("/com/spotify/ad/123", None), "spotify:ad:123");
         assert_eq!(spotify_id("spotify:track:ABC", None), "spotify:track:ABC");
         assert_eq!(
-            spotify_id("/org/mpris/x", Some("https://open.spotify.com/track/QQQ?si=1")),
+            spotify_id(
+                "/org/mpris/x",
+                Some("https://open.spotify.com/track/QQQ?si=1")
+            ),
             "spotify:track:QQQ"
         );
         assert_eq!(spotify_id("/org/mpris/x", None), "/org/mpris/x");
@@ -1364,18 +1539,26 @@ mod tests {
 
     #[test]
     fn metadata_parses_and_an_empty_player_has_no_track() {
-        let Value::Map(map) = metadata("/com/spotify/track/ID1", "Get Lucky - Radio Edit") else { unreachable!() };
+        let Value::Map(map) = metadata("/com/spotify/track/ID1", "Get Lucky - Radio Edit") else {
+            unreachable!()
+        };
         let track = parse_metadata(&map).unwrap();
         assert_eq!(track.id, "spotify:track:ID1");
         assert_eq!(track.title, "Get Lucky");
         assert_eq!(track.artist, "Daft Punk, Pharrell Williams");
         assert_eq!(track.album, "Random Access Memories");
         assert_eq!(track.duration, 369.0);
-        assert_eq!(track.art_url.as_deref(), Some("https://i.scdn.co/image/abc"));
+        assert_eq!(
+            track.art_url.as_deref(),
+            Some("https://i.scdn.co/image/abc")
+        );
 
         assert_eq!(parse_metadata(&[]), None);
         assert_eq!(
-            parse_metadata(&[("mpris:trackid".into(), s("/org/mpris/MediaPlayer2/TrackList/NoTrack"))]),
+            parse_metadata(&[(
+                "mpris:trackid".into(),
+                s("/org/mpris/MediaPlayer2/TrackList/NoTrack")
+            )]),
             None
         );
     }
@@ -1385,7 +1568,10 @@ mod tests {
         let mut state = PlayerState::default();
         state.apply(
             &[
-                ("Metadata".into(), metadata("/com/spotify/track/ID1", "Get Lucky")),
+                (
+                    "Metadata".into(),
+                    metadata("/com/spotify/track/ID1", "Get Lucky"),
+                ),
                 ("PlaybackStatus".into(), s("Playing")),
                 ("Position".into(), Value::Int(10_000_000)),
             ],
@@ -1417,14 +1603,23 @@ mod tests {
             ],
             0.0,
         );
-        assert!(state.playing, "the status after the metadata, whatever the order");
-        let applied = state.apply(&[("Metadata".into(), metadata("/com/spotify/track/ID2", "Two"))], 2_000.0);
+        assert!(
+            state.playing,
+            "the status after the metadata, whatever the order"
+        );
+        let applied = state.apply(
+            &[("Metadata".into(), metadata("/com/spotify/track/ID2", "Two"))],
+            2_000.0,
+        );
         assert!(applied.track_changed);
         assert_eq!(state.position, 0.0);
         assert_eq!(state.track.as_ref().unwrap().title, "Two");
 
         // The same track again is not a change.
-        let applied = state.apply(&[("Metadata".into(), metadata("/com/spotify/track/ID2", "Two"))], 3_000.0);
+        let applied = state.apply(
+            &[("Metadata".into(), metadata("/com/spotify/track/ID2", "Two"))],
+            3_000.0,
+        );
         assert!(!applied.track_changed);
 
         let applied = state.apply(&[("PlaybackStatus".into(), s("Stopped"))], 4_000.0);
@@ -1447,15 +1642,28 @@ mod tests {
         );
         assert!(state.shuffle && state.repeat);
         assert_eq!(state.volume, 100);
-        state.apply(&[("LoopStatus".into(), s("None")), ("Volume".into(), Value::Float(0.004))], 0.0);
+        state.apply(
+            &[
+                ("LoopStatus".into(), s("None")),
+                ("Volume".into(), Value::Float(0.004)),
+            ],
+            0.0,
+        );
         assert!(!state.repeat);
         assert_eq!(state.volume, 0);
     }
 
     #[test]
     fn the_state_reaches_the_page_in_camel_case() {
-        let mut state = PlayerState { running: true, installed: true, ..PlayerState::default() };
-        state.apply(&[("Metadata".into(), metadata("/com/spotify/track/ID1", "One"))], 7.0);
+        let mut state = PlayerState {
+            running: true,
+            installed: true,
+            ..PlayerState::default()
+        };
+        state.apply(
+            &[("Metadata".into(), metadata("/com/spotify/track/ID1", "One"))],
+            7.0,
+        );
         let json = serde_json::to_value(&state).unwrap();
         assert_eq!(json["positionAt"], 7.0);
         assert_eq!(json["track"]["artUrl"], "https://i.scdn.co/image/abc");
@@ -1473,8 +1681,14 @@ mod tests {
             artwork_source("https://open.spotify.com/image/ab67"),
             Some(ArtSource::Https("https://i.scdn.co/image/ab67".into()))
         );
-        assert!(matches!(artwork_source("https://mosaic.scdn.co/640/x"), Some(ArtSource::Https(_))));
-        assert!(matches!(artwork_source("https://image-cdn-ak.spotifycdn.com/image/x"), Some(ArtSource::Https(_))));
+        assert!(matches!(
+            artwork_source("https://mosaic.scdn.co/640/x"),
+            Some(ArtSource::Https(_))
+        ));
+        assert!(matches!(
+            artwork_source("https://image-cdn-ak.spotifycdn.com/image/x"),
+            Some(ArtSource::Https(_))
+        ));
         assert_eq!(artwork_source("http://i.scdn.co/image/ab67"), None);
         assert_eq!(artwork_source("https://evil.example/i.scdn.co"), None);
         assert_eq!(artwork_source("https://i.scdn.co.evil.example/x"), None);
@@ -1498,6 +1712,9 @@ mod tests {
         assert_eq!(sniff_image(b"RIFF\0\0\0\0WEBPVP8 "), Some("image/webp"));
         assert_eq!(sniff_image(b"GIF89a.."), Some("image/gif"));
         assert_eq!(sniff_image(b"<svg xmlns="), None);
-        assert_eq!(data_url(&[0xFF, 0xD8, 0xFF]).as_deref(), Some("data:image/jpeg;base64,/9j/"));
+        assert_eq!(
+            data_url(&[0xFF, 0xD8, 0xFF]).as_deref(),
+            Some("data:image/jpeg;base64,/9j/")
+        );
     }
 }

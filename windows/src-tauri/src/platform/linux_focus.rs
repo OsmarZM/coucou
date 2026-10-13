@@ -55,7 +55,9 @@ pub fn process_ancestors(pid: u32) -> Vec<u32> {
     let mut current = pid;
     // The relay, its ancestors, and the one that ends the walk.
     for _ in 0..session_window::MAX_DEPTH + 2 {
-        let Some(p) = read_proc(current, uid) else { break };
+        let Some(p) = read_proc(current, uid) else {
+            break;
+        };
         let parent = p.parent;
         procs.insert(current, p);
         if procs.contains_key(&parent) {
@@ -86,9 +88,13 @@ fn still_linked(owners: &[u32]) -> Vec<(u32, String)> {
 /// is gone or its parent is no longer the next one.
 fn linked_chain(owners: &[u32], procs: &[Option<Proc>]) -> Vec<(u32, String)> {
     let linked = |i: usize| {
-        procs[i].as_ref().is_some_and(|p| owners.get(i + 1).is_none_or(|next| p.parent == *next))
+        procs[i]
+            .as_ref()
+            .is_some_and(|p| owners.get(i + 1).is_none_or(|next| p.parent == *next))
     };
-    let Some(start) = (0..owners.len().min(procs.len())).find(|i| linked(*i)) else { return Vec::new() };
+    let Some(start) = (0..owners.len().min(procs.len())).find(|i| linked(*i)) else {
+        return Vec::new();
+    };
     let mut out = Vec::new();
     for i in start..owners.len().min(procs.len()) {
         let Some(p) = &procs[i] else { break };
@@ -112,7 +118,8 @@ enum Method {
 /// XWayland; elsewhere EWMH is the standard way, with KWin's script as a
 /// second try on Plasma's X11 session.
 fn methods(session_type: &str, wayland_display: &str, display: &str, desktop: &str) -> Vec<Method> {
-    let wayland = session_type.eq_ignore_ascii_case("wayland") || !wayland_display.trim().is_empty();
+    let wayland =
+        session_type.eq_ignore_ascii_case("wayland") || !wayland_display.trim().is_empty();
     let x11 = !display.trim().is_empty();
     let kde = desktop.split(':').any(|d| d.eq_ignore_ascii_case("kde"));
     let mut out = Vec::new();
@@ -161,7 +168,12 @@ pub fn focus_session_window(owners: &[u32], folder: &str) -> bool {
 
 /// Runs a helper with nothing attached and a time limit; true when it exits 0.
 fn run_quietly(cmd: &mut Command, limit: Duration) -> bool {
-    let Ok(mut child) = cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() else {
+    let Ok(mut child) = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
         return false;
     };
     let deadline = Instant::now() + limit;
@@ -198,7 +210,11 @@ mod x11 {
     }
 
     fn cardinal(conn: &RustConnection, window: Window, prop: u32) -> Option<u32> {
-        let reply = conn.get_property(false, window, prop, AtomEnum::CARDINAL, 0, 1).ok()?.reply().ok()?;
+        let reply = conn
+            .get_property(false, window, prop, AtomEnum::CARDINAL, 0, 1)
+            .ok()?
+            .reply()
+            .ok()?;
         let value = reply.value32()?.next();
         value
     }
@@ -290,9 +306,13 @@ mod kwin {
     /// A unique bus name as the bus hands it out (`:1.42`), nothing else: it is
     /// the one string the script holds.
     fn is_unique_name(name: &str) -> bool {
-        let Some(rest) = name.strip_prefix(':') else { return false };
+        let Some(rest) = name.strip_prefix(':') else {
+            return false;
+        };
         let mut parts = rest.split('.');
-        let ok = |p: Option<&str>| p.is_some_and(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()));
+        let ok = |p: Option<&str>| {
+            p.is_some_and(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+        };
         ok(parts.next()) && ok(parts.next()) && parts.next().is_none()
     }
 
@@ -306,8 +326,17 @@ mod kwin {
         if !is_unique_name(reply_to) || pids.is_empty() {
             return None;
         }
-        let pids = pids.iter().map(u32::to_string).collect::<Vec<_>>().join(", ");
-        let folder = folder.to_lowercase().encode_utf16().map(|c| c.to_string()).collect::<Vec<_>>().join(", ");
+        let pids = pids
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let folder = folder
+            .to_lowercase()
+            .encode_utf16()
+            .map(|c| c.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
         Some(format!(
             r#"(function () {{
     var pids = [{pids}];
@@ -345,21 +374,33 @@ mod kwin {
     impl Drop for Loaded<'_> {
         fn drop(&mut self) {
             let proxy = self.conn.with_proxy(KWIN, "/Scripting", TIMEOUT);
-            let _: Result<(bool,), _> = proxy.method_call("org.kde.kwin.Scripting", "unloadScript", (self.name.as_str(),));
+            let _: Result<(bool,), _> = proxy.method_call(
+                "org.kde.kwin.Scripting",
+                "unloadScript",
+                (self.name.as_str(),),
+            );
             let _ = std::fs::remove_file(&self.path);
         }
     }
 
     /// The runtime directory, checked private, where the script file is written.
     fn script_dir() -> Option<PathBuf> {
-        super::super::relay_socket_path()?.parent().map(Path::to_path_buf)
+        super::super::relay_socket_path()?
+            .parent()
+            .map(Path::to_path_buf)
     }
 
     pub fn activate(pids: &[u32], folder: &str) -> bool {
-        let Ok(conn) = Connection::new_session() else { return false };
+        let Ok(conn) = Connection::new_session() else {
+            return false;
+        };
         let reply_to = conn.unique_name().to_string();
-        let Some(text) = script(pids, folder, &reply_to) else { return false };
-        let Some(dir) = script_dir() else { return false };
+        let Some(text) = script(pids, folder, &reply_to) else {
+            return false;
+        };
+        let Some(dir) = script_dir() else {
+            return false;
+        };
 
         // 0 unanswered, 1 activated, 2 not found.
         let outcome = Arc::new(AtomicU8::new(0));
@@ -368,7 +409,11 @@ mod kwin {
             MatchRule::new_method_call(),
             Box::new(move |msg, c| {
                 if msg.interface().as_deref() == Some(REPLY_INTERFACE) {
-                    let result = if msg.member().as_deref() == Some("Activated") { 1 } else { 2 };
+                    let result = if msg.member().as_deref() == Some("Activated") {
+                        1
+                    } else {
+                        2
+                    };
                     seen.store(result, Ordering::SeqCst);
                     let _ = dbus::channel::Sender::send(c, msg.method_return());
                 }
@@ -376,7 +421,11 @@ mod kwin {
             }),
         );
 
-        let name = format!("coucou-focus-{}-{}", std::process::id(), COUNTER.fetch_add(1, Ordering::Relaxed));
+        let name = format!(
+            "coucou-focus-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        );
         let path = dir.join(format!("{name}.js"));
         let written = std::fs::OpenOptions::new()
             .write(true)
@@ -388,11 +437,21 @@ mod kwin {
             let _ = std::fs::remove_file(&path);
             return false;
         }
-        let loaded = Loaded { conn: &conn, name, path };
+        let loaded = Loaded {
+            conn: &conn,
+            name,
+            path,
+        };
 
         let scripting = conn.with_proxy(KWIN, "/Scripting", TIMEOUT);
-        let Some(path_str) = loaded.path.to_str() else { return false };
-        let id: i32 = match scripting.method_call("org.kde.kwin.Scripting", "loadScript", (path_str, loaded.name.as_str())) {
+        let Some(path_str) = loaded.path.to_str() else {
+            return false;
+        };
+        let id: i32 = match scripting.method_call(
+            "org.kde.kwin.Scripting",
+            "loadScript",
+            (path_str, loaded.name.as_str()),
+        ) {
             Ok((id,)) => id,
             Err(_) => return false,
         };
@@ -401,7 +460,8 @@ mod kwin {
         }
         // Plasma 6 puts the script at /Scripting/Script<id>, Plasma 5 at /<id>.
         let run = |path: String| {
-            conn.with_proxy(KWIN, path, TIMEOUT).method_call::<(), _, _, _>("org.kde.kwin.Script", "run", ())
+            conn.with_proxy(KWIN, path, TIMEOUT)
+                .method_call::<(), _, _, _>("org.kde.kwin.Script", "run", ())
         };
         if run(format!("/Scripting/Script{id}")).is_err() && run(format!("/{id}")).is_err() {
             return false;
@@ -425,7 +485,18 @@ mod kwin {
         fn only_a_bus_unique_name_is_put_in_the_script() {
             assert!(is_unique_name(":1.42"));
             assert!(is_unique_name(":12.3456"));
-            for bad in ["", ":", ":1", ":1.", ":.1", "1.42", ":1.42.3", ":1.4a", "org.kde.KWin", ":1.42\"); x(\""] {
+            for bad in [
+                "",
+                ":",
+                ":1",
+                ":1.",
+                ":.1",
+                "1.42",
+                ":1.42.3",
+                ":1.4a",
+                "org.kde.KWin",
+                ":1.42\"); x(\"",
+            ] {
                 assert!(!is_unique_name(bad), "{bad}");
             }
             assert!(script(&[1], "x", "org.kde.KWin").is_none());
@@ -442,11 +513,24 @@ mod kwin {
             assert!(text.contains(r#"callDBus(":1.42", "/", "fr.louisraille.Coucou.Focus""#));
             // Apart from the code itself, every quoted string is one we wrote.
             let quoted: Vec<&str> = text.split('"').skip(1).step_by(2).collect();
-            assert_eq!(quoted, ["function", ":1.42", "/", "fr.louisraille.Coucou.Focus", "Activated", "NotFound"]);
+            assert_eq!(
+                quoted,
+                [
+                    "function",
+                    ":1.42",
+                    "/",
+                    "fr.louisraille.Coucou.Focus",
+                    "Activated",
+                    "NotFound"
+                ]
+            );
 
             let empty = script(&[1], "", ":1.2").unwrap();
             assert!(empty.contains("String.fromCharCode();"));
-            assert!(empty.contains("workspace.activeWindow = found") && empty.contains("workspace.activeClient = found"));
+            assert!(
+                empty.contains("workspace.activeWindow = found")
+                    && empty.contains("workspace.activeClient = found")
+            );
         }
     }
 }
@@ -465,7 +549,8 @@ mod kitty {
         let value = std::str::from_utf8(value).ok()?;
         let path = value.strip_prefix("unix:")?;
         let plain = |c: char| c.is_ascii_alphanumeric() || "/_.-@+:".contains(c);
-        (!path.is_empty() && path.len() <= 107 && path.chars().all(plain)).then(|| value.to_string())
+        (!path.is_empty() && path.len() <= 107 && path.chars().all(plain))
+            .then(|| value.to_string())
     }
 
     /// `kitten` beside the running kitty, else on $PATH.
@@ -474,7 +559,10 @@ mod kitty {
             .ok()
             .and_then(|exe| exe.parent().map(|d| d.join("kitten")));
         beside
-            .filter(|p| std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0))
+            .filter(|p| {
+                std::fs::metadata(p)
+                    .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+            })
             .or_else(|| super::super::find_on_path("kitten"))
     }
 
@@ -482,14 +570,31 @@ mod kitty {
     /// socket (`listen_on` and `allow_remote_control`), focuses the session's
     /// tab and window. Quietly nothing otherwise.
     pub fn focus_tab(chain: &[(u32, String)]) -> bool {
-        let Some(at) = chain.iter().position(|(_, name)| name == "kitty") else { return false };
-        let Some((shell, _)) = at.checked_sub(1).and_then(|i| chain.get(i)) else { return false };
+        let Some(at) = chain.iter().position(|(_, name)| name == "kitty") else {
+            return false;
+        };
+        let Some((shell, _)) = at.checked_sub(1).and_then(|i| chain.get(i)) else {
+            return false;
+        };
         let kitty_pid = chain[at].0;
-        let Ok(environ) = std::fs::read(format!("/proc/{shell}/environ")) else { return false };
-        let Some(to) = listen_on(&environ) else { return false };
-        let Some(kitten) = kitten(kitty_pid) else { return false };
+        let Ok(environ) = std::fs::read(format!("/proc/{shell}/environ")) else {
+            return false;
+        };
+        let Some(to) = listen_on(&environ) else {
+            return false;
+        };
+        let Some(kitten) = kitten(kitty_pid) else {
+            return false;
+        };
         run_quietly(
-            Command::new(kitten).args(["@", "--to", &to, "focus-window", "--match", &format!("pid:{shell}")]),
+            Command::new(kitten).args([
+                "@",
+                "--to",
+                &to,
+                "focus-window",
+                "--match",
+                &format!("pid:{shell}"),
+            ]),
             Duration::from_secs(2),
         )
     }
@@ -518,10 +623,19 @@ mod tests {
     #[test]
     fn kitty_sockets_are_read_from_the_shell_environment() {
         let env = b"HOME=/home/me\0KITTY_LISTEN_ON=unix:/tmp/kitty-4242\0TERM=xterm-kitty\0";
-        assert_eq!(kitty::listen_on(env).as_deref(), Some("unix:/tmp/kitty-4242"));
-        assert_eq!(kitty::listen_on(b"KITTY_LISTEN_ON=unix:@mykitty\0").as_deref(), Some("unix:@mykitty"));
+        assert_eq!(
+            kitty::listen_on(env).as_deref(),
+            Some("unix:/tmp/kitty-4242")
+        );
+        assert_eq!(
+            kitty::listen_on(b"KITTY_LISTEN_ON=unix:@mykitty\0").as_deref(),
+            Some("unix:@mykitty")
+        );
         // Not a socket of the expected shape: left alone.
-        assert_eq!(kitty::listen_on(b"KITTY_LISTEN_ON=tcp:localhost:5000\0"), None);
+        assert_eq!(
+            kitty::listen_on(b"KITTY_LISTEN_ON=tcp:localhost:5000\0"),
+            None
+        );
         assert_eq!(kitty::listen_on(b"KITTY_LISTEN_ON=unix:/tmp/a b\0"), None);
         assert_eq!(kitty::listen_on(b"KITTY_LISTEN_ON=unix:$(rm)\0"), None);
         assert_eq!(kitty::listen_on(b"KITTY_LISTEN_ON=unix:\0"), None);
@@ -543,15 +657,26 @@ mod tests {
 
     #[test]
     fn a_chain_starts_past_exited_shells_and_ends_where_it_breaks() {
-        let p = |parent: u32, name: &str| Some(Proc { parent, exe: name.to_string() });
-        let names = |chain: Vec<(u32, String)>| chain.into_iter().map(|(pid, _)| pid).collect::<Vec<_>>();
+        let p = |parent: u32, name: &str| {
+            Some(Proc {
+                parent,
+                exe: name.to_string(),
+            })
+        };
+        let names =
+            |chain: Vec<(u32, String)>| chain.into_iter().map(|(pid, _)| pid).collect::<Vec<_>>();
         // sh (gone) → claude → bash → kitty
         let owners = [10, 20, 30, 40];
         let alive = [None, p(30, "claude"), p(40, "bash"), p(1, "kitty")];
         assert_eq!(names(linked_chain(&owners, &alive)), [20, 30, 40]);
         assert_eq!(linked_chain(&owners, &alive)[2].1, "kitty");
         // An ID reused by an unrelated process is not a start.
-        let reused = [p(999, "other"), p(30, "claude"), p(40, "bash"), p(1, "kitty")];
+        let reused = [
+            p(999, "other"),
+            p(30, "claude"),
+            p(40, "bash"),
+            p(1, "kitty"),
+        ];
         assert_eq!(names(linked_chain(&owners, &reused)), [20, 30, 40]);
         // The terminal closed and its ID went to someone else: cut there.
         let closed = [None, p(30, "claude"), p(40, "bash"), None];

@@ -1,11 +1,13 @@
 // Entry point: boot the bridge, wire the island, start the greeting.
 
 import "./style.css";
+import { connectPersonalAlerts } from "./core/personal-ui";
 import { Bridge, IS_TAURI, onEvent } from "./core/bridge";
 import { Sound } from "./core/sound";
 import { State, type Settings } from "./core/state";
 import { Island } from "./island/island";
 import { registerHookHandlers } from "./island/hooks";
+import { registerPhoneLink } from "./island/phone-link";
 import { registerIntegrationHandlers, refreshConfigured } from "./island/integrations";
 import { registerShortcutHandlers } from "./island/shortcuts";
 import { applySpotify, registerSpotifyHandlers } from "./island/spotify";
@@ -25,6 +27,7 @@ async function main() {
   void Sound.preload();
 
   const island = new Island(root);
+  connectPersonalAlerts(() => island.alert("prompt"));
 
   const boot = await Bridge.boot();
   if (boot) {
@@ -99,6 +102,7 @@ async function main() {
   });
 
   registerHookHandlers(island);
+  registerPhoneLink(island);
   registerIntegrationHandlers(island);
   registerShortcutHandlers(island, () => setPaused(false));
   registerSpotifyHandlers(island);

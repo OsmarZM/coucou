@@ -75,6 +75,34 @@ pub struct Settings {
     /// Mochi on the desktop: whether he lives there, and his spot. Owned by
     /// the Rust side (desktop.rs) — what a webview sends back is ignored.
     pub desktop_mochi: DesktopMochiPref,
+    /// The phone link (phone_link/) is on: a TLS server for the Android app on
+    /// the local network. Off until the user turns it on in Settings → Phone;
+    /// owned by the Rust side, so what a webview sends back is ignored.
+    pub phone_link: bool,
+    /// The phone may chat through this computer's API keys (phone_link/chat.rs).
+    /// Off until the user turns it on in Settings → Android phone; owned by the
+    /// Rust side like `phone_link`, so what a webview sends back is ignored.
+    pub phone_chat: bool,
+    /// Which models the phone may use, as "provider/model". Empty allows none.
+    /// Also owned by the Rust side (phone_link::set_chat_models cleans it).
+    pub phone_chat_models: Vec<String>,
+    /// The phone may see session details (steps, last line, project folder name, colour). Off until the
+    /// user turns it on in Settings → Android phone; owned by the Rust side like `phone_link`.
+    pub phone_details: bool,
+    /// Let the phone answer the questions Claude Code asks (cap `answers`). Off by default; owned by Rust like the other phone switches.
+    pub phone_answers: bool,
+    /// Show the files an agent changed on the phone, and their diffs on request (cap `diffs`). Off by default; owned by Rust like the other phone switches.
+    pub phone_diffs: bool,
+    /// Show the Claude and Codex plan usage on the phone (cap `usage`). Off by default; owned by Rust like the other phone switches.
+    pub phone_usage: bool,
+    /// The service pills whose cards the phone may see, by pill id (cap `services`). None by default; owned by Rust like the other phone switches.
+    pub phone_services: Vec<String>,
+    /// Reach the phone through the user's own relay when it is not on this network (phone_link/relay_client.rs).
+    /// Off by default; owned by Rust like the other phone switches. The access key, the room and the pairing key live
+    /// in the OS keystore, never here.
+    pub phone_relay: bool,
+    /// The relay's address (`wss://…`), empty until the user enters it. Not a secret. Owned by Rust.
+    pub phone_relay_url: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -136,6 +164,16 @@ impl Default for Settings {
             pill_colors: BTreeMap::new(),
             language: String::new(),
             desktop_mochi: DesktopMochiPref::default(),
+            phone_link: false,
+            phone_chat: false,
+            phone_chat_models: Vec::new(),
+            phone_details: false,
+            phone_answers: false,
+            phone_diffs: false,
+            phone_usage: false,
+            phone_services: Vec::new(),
+            phone_relay: false,
+            phone_relay_url: String::new(),
         }
     }
 }
@@ -233,7 +271,10 @@ fn load_from(path: &Path) -> Settings {
         Ok(bytes) => bytes,
         Err(err) if err.kind() == ErrorKind::NotFound => return Settings::default(),
         Err(err) => {
-            note(format!("can't read {}: {err} — using the defaults", path.display()));
+            note(format!(
+                "can't read {}: {err} — using the defaults",
+                path.display()
+            ));
             protect(path);
             return Settings::default();
         }
@@ -246,7 +287,10 @@ fn load_from(path: &Path) -> Settings {
                 copy.display()
             )),
             Err(err) => {
-                note(format!("{} is not usable and could not be copied: {err}", path.display()));
+                note(format!(
+                    "{} is not usable and could not be copied: {err}",
+                    path.display()
+                ));
                 protect(path);
             }
         }
@@ -272,14 +316,21 @@ fn keep_what_was_not_loaded(path: &Path) -> std::io::Result<()> {
     match std::fs::read(path) {
         Ok(bytes) => {
             let copy = set_aside(path, "unread", &bytes)?;
-            note(format!("{} was never loaded — kept as {}", path.display(), copy.display()));
+            note(format!(
+                "{} was never loaded — kept as {}",
+                path.display(),
+                copy.display()
+            ));
         }
         // Gone since: nothing is left to protect.
         Err(err) if err.kind() == ErrorKind::NotFound => {}
         Err(err) => {
             return Err(std::io::Error::new(
                 err.kind(),
-                format!("{} still can't be read, so it is left as it is: {err}", path.display()),
+                format!(
+                    "{} still can't be read, so it is left as it is: {err}",
+                    path.display()
+                ),
             ));
         }
     }
@@ -310,7 +361,11 @@ fn same_copy(path: &Path, kind: &str, bytes: &[u8]) -> Option<PathBuf> {
         .ok()?
         .filter_map(Result::ok)
         .filter(|entry| entry.file_name().to_string_lossy().starts_with(&prefix))
-        .filter(|entry| entry.metadata().is_ok_and(|m| m.len() == bytes.len() as u64))
+        .filter(|entry| {
+            entry
+                .metadata()
+                .is_ok_and(|m| m.len() == bytes.len() as u64)
+        })
         .map(|entry| entry.path())
         .find(|copy| std::fs::read(copy).is_ok_and(|held| held == bytes))
 }
@@ -333,7 +388,11 @@ fn set_aside_as(
             0 => path.with_file_name(&base),
             n => path.with_file_name(format!("{base}-{n}")),
         };
-        match std::fs::OpenOptions::new().write(true).create_new(true).open(&copy) {
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&copy)
+        {
             Ok(mut file) => {
                 let written = write(&mut file, bytes);
                 drop(file);
@@ -346,7 +405,10 @@ fn set_aside_as(
             Err(err) => return Err(err),
         }
     }
-    Err(std::io::Error::new(ErrorKind::AlreadyExists, format!("too many copies named {base}")))
+    Err(std::io::Error::new(
+        ErrorKind::AlreadyExists,
+        format!("too many copies named {base}"),
+    ))
 }
 
 /// Writes `bytes` to `file` and waits until they are on the disk.
@@ -394,6 +456,8 @@ mod tests {
   "autoCloseInterval": 30.0,
   "openOnHover": true,
   "absenceInterval": 60.0,
+  "visibilityMode": "autoHide",
+  "userPinned": true,
   "activeIntegrations": ["integration_notion"],
   "mainPill": "agent_cursor",
   "screen": "cursor",
@@ -412,7 +476,17 @@ mod tests {
   "mochiOutfit": "witchHat",
   "pillColors": { "integration_claude": "#2DD4BF" },
   "language": "pt-BR",
-  "desktopMochi": { "onDesktop": true, "spot": { "x": 1500.5, "y": -300.0, "space": "screen" } }
+  "desktopMochi": { "onDesktop": true, "spot": { "x": 1500.5, "y": -300.0, "space": "screen" } },
+  "phoneLink": true,
+  "phoneChat": true,
+  "phoneChatModels": ["openai/gpt-x"],
+  "phoneDetails": true,
+  "phoneAnswers": true,
+  "phoneDiffs": true,
+  "phoneUsage": true,
+  "phoneServices": ["integration_stripe"],
+  "phoneRelay": true,
+  "phoneRelayUrl": "wss://relay.example.workers.dev"
 }"##;
 
     fn custom() -> Value {
@@ -440,8 +514,8 @@ mod tests {
 
     /// A fresh directory of our own, and the settings.json it will hold.
     fn scratch(name: &str) -> (PathBuf, PathBuf) {
-        let dir = std::env::temp_dir()
-            .join(format!("coucou-settings-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("coucou-settings-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("settings.json");
@@ -519,6 +593,193 @@ mod tests {
     }
 
     #[test]
+    fn a_file_from_before_the_phone_link_keeps_it_off() {
+        // The link opens a port on the local network: it is never on by default,
+        // and an older file must not be read as consent.
+        assert!(!Settings::default().phone_link);
+        let loaded = parse(&custom_with("phoneLink", None)).unwrap();
+        assert!(!loaded.phone_link);
+        assert_eq!(loaded.mochi_outfit, "witchHat");
+        assert!(
+            parse(&custom_with("phoneLink", Some(serde_json::json!(true))))
+                .unwrap()
+                .phone_link
+        );
+
+        // A value of the wrong type does not switch it on either, and costs nothing else.
+        let (dir, file) = scratch("phone-link");
+        std::fs::write(
+            &file,
+            custom_with("phoneLink", Some(serde_json::json!("yes"))),
+        )
+        .unwrap();
+        let odd = load_from(&file);
+        assert!(!odd.phone_link);
+        assert_eq!(odd.mochi_outfit, "witchHat");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_file_from_before_phone_chat_keeps_it_off_and_empty() {
+        // Chat spends the user's API credit: never on by default, and an older file is not consent.
+        let d = Settings::default();
+        assert!(!d.phone_chat);
+        assert!(d.phone_chat_models.is_empty());
+        let loaded = parse(&custom_with("phoneChat", None)).unwrap();
+        assert!(!loaded.phone_chat);
+        assert!(
+            parse(&custom_with("phoneChat", Some(serde_json::json!(true))))
+                .unwrap()
+                .phone_chat
+        );
+        let odd = parse(&custom_with("phoneChat", Some(serde_json::json!("yes")))).unwrap();
+        assert!(!odd.phone_chat, "a wrong type does not switch it on");
+        assert_eq!(odd.mochi_outfit, "witchHat");
+        let models = parse(&custom_with(
+            "phoneChatModels",
+            Some(serde_json::json!(["openai/gpt-x"])),
+        ))
+        .unwrap();
+        assert_eq!(models.phone_chat_models, vec!["openai/gpt-x".to_string()]);
+        let bad = parse(&custom_with(
+            "phoneChatModels",
+            Some(serde_json::json!("openai/gpt-x")),
+        ))
+        .unwrap();
+        assert!(bad.phone_chat_models.is_empty());
+    }
+
+    #[test]
+    fn a_file_from_before_phone_answers_keeps_it_off() {
+        // Answering for the agent from the phone is never on by default; an older file is not consent.
+        assert!(!Settings::default().phone_answers);
+        assert!(
+            !parse(&custom_with("phoneAnswers", None))
+                .unwrap()
+                .phone_answers
+        );
+        assert!(
+            parse(&custom_with("phoneAnswers", Some(serde_json::json!(true))))
+                .unwrap()
+                .phone_answers
+        );
+        assert!(
+            !parse(&custom_with("phoneAnswers", Some(serde_json::json!("yes"))))
+                .unwrap()
+                .phone_answers,
+            "a wrong type does not switch it on"
+        );
+    }
+
+    #[test]
+    fn a_file_from_before_phone_diffs_keeps_it_off() {
+        // Showing what an agent changed on the phone is never on by default; an older file is not consent.
+        assert!(!Settings::default().phone_diffs);
+        assert!(!parse(&custom_with("phoneDiffs", None)).unwrap().phone_diffs);
+        assert!(
+            parse(&custom_with("phoneDiffs", Some(serde_json::json!(true))))
+                .unwrap()
+                .phone_diffs
+        );
+        assert!(
+            !parse(&custom_with("phoneDiffs", Some(serde_json::json!("yes"))))
+                .unwrap()
+                .phone_diffs,
+            "a wrong type does not switch it on"
+        );
+    }
+
+    #[test]
+    fn a_file_from_before_phone_usage_keeps_it_off() {
+        assert!(!Settings::default().phone_usage);
+        assert!(!parse(&custom_with("phoneUsage", None)).unwrap().phone_usage);
+        assert!(
+            parse(&custom_with("phoneUsage", Some(serde_json::json!(true))))
+                .unwrap()
+                .phone_usage
+        );
+        assert!(
+            !parse(&custom_with("phoneUsage", Some(serde_json::json!("yes"))))
+                .unwrap()
+                .phone_usage,
+            "a wrong type does not switch it on"
+        );
+    }
+
+    #[test]
+    fn a_file_from_before_the_relay_keeps_it_off_and_empty() {
+        assert!(!Settings::default().phone_relay);
+        assert!(Settings::default().phone_relay_url.is_empty());
+        let old = parse(&custom_with("phoneRelay", None)).unwrap();
+        assert!(!old.phone_relay);
+        assert!(
+            parse(&custom_with("phoneRelay", Some(serde_json::json!(true))))
+                .unwrap()
+                .phone_relay
+        );
+        assert!(
+            !parse(&custom_with("phoneRelay", Some(serde_json::json!("yes"))))
+                .unwrap()
+                .phone_relay,
+            "a wrong type does not switch it on"
+        );
+        assert!(
+            parse(&custom_with("phoneRelayUrl", Some(serde_json::json!(5))))
+                .unwrap()
+                .phone_relay_url
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_file_from_before_phone_services_shows_none() {
+        // Showing a service on the phone is never on by default; an older file is not consent.
+        assert!(Settings::default().phone_services.is_empty());
+        assert!(parse(&custom_with("phoneServices", None))
+            .unwrap()
+            .phone_services
+            .is_empty());
+        assert_eq!(
+            parse(&custom_with(
+                "phoneServices",
+                Some(serde_json::json!(["integration_stripe"]))
+            ))
+            .unwrap()
+            .phone_services,
+            vec!["integration_stripe".to_string()]
+        );
+        assert!(
+            parse(&custom_with(
+                "phoneServices",
+                Some(serde_json::json!("integration_stripe"))
+            ))
+            .unwrap()
+            .phone_services
+            .is_empty(),
+            "a wrong type shows none"
+        );
+    }
+
+    #[test]
+    fn a_file_from_before_phone_details_keeps_them_off() {
+        // Details can include commands and folder names: never on by default, an older file is not consent.
+        assert!(!Settings::default().phone_details);
+        assert!(
+            !parse(&custom_with("phoneDetails", None))
+                .unwrap()
+                .phone_details
+        );
+        assert!(
+            parse(&custom_with("phoneDetails", Some(serde_json::json!(true))))
+                .unwrap()
+                .phone_details
+        );
+        let odd = parse(&custom_with("phoneDetails", Some(serde_json::json!("yes")))).unwrap();
+        assert!(!odd.phone_details, "a wrong type does not switch it on");
+        assert_eq!(odd.mochi_outfit, "witchHat");
+    }
+
+    #[test]
     fn a_half_written_desktop_spot_costs_only_the_spot() {
         let loaded = parse(&custom_with(
             "desktopMochi",
@@ -529,7 +790,11 @@ mod tests {
         assert_eq!(loaded.desktop_mochi, DesktopMochiPref::default());
         assert_eq!(loaded.model, "some-model");
 
-        let loaded = parse(&custom_with("desktopMochi", Some(json!({ "onDesktop": true })))).unwrap();
+        let loaded = parse(&custom_with(
+            "desktopMochi",
+            Some(json!({ "onDesktop": true })),
+        ))
+        .unwrap();
         assert!(loaded.desktop_mochi.on_desktop);
         assert_eq!(loaded.desktop_mochi.spot, None);
     }
@@ -544,8 +809,15 @@ mod tests {
     #[test]
     fn pill_colours_are_kept_as_written_and_cost_nothing_else_when_unusable() {
         // A pill a newer build added keeps its colour through a save by this one.
-        let loaded = parse(&custom_with("pillColors", Some(json!({ "agent_new": "#abcdef" })))).unwrap();
-        assert_eq!(loaded.pill_colors.get("agent_new").map(String::as_str), Some("#abcdef"));
+        let loaded = parse(&custom_with(
+            "pillColors",
+            Some(json!({ "agent_new": "#abcdef" })),
+        ))
+        .unwrap();
+        assert_eq!(
+            loaded.pill_colors.get("agent_new").map(String::as_str),
+            Some("#abcdef")
+        );
         // Not a map of strings: the colours fall back, and nothing else does.
         let loaded = parse(&custom_with("pillColors", Some(json!(["#2DD4BF"])))).unwrap();
         assert!(loaded.pill_colors.is_empty());
@@ -560,7 +832,12 @@ mod tests {
         assert_eq!(loaded.mochi_outfit, "topHat");
         // The language too: "" (follow the system) when absent, as it comes otherwise.
         assert_eq!(parse(&custom_with("language", None)).unwrap().language, "");
-        assert_eq!(parse(&custom_with("language", Some(json!("xx")))).unwrap().language, "xx");
+        assert_eq!(
+            parse(&custom_with("language", Some(json!("xx"))))
+                .unwrap()
+                .language,
+            "xx"
+        );
     }
 
     #[test]
@@ -649,7 +926,11 @@ mod tests {
     #[cfg(windows)]
     fn locked(path: &Path) -> std::fs::File {
         use std::os::windows::fs::OpenOptionsExt;
-        std::fs::OpenOptions::new().read(true).share_mode(0).open(path).unwrap()
+        std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(path)
+            .unwrap()
     }
 
     #[cfg(windows)]
@@ -742,7 +1023,13 @@ mod tests {
             Err(std::io::Error::other("the disk is full"))
         }
         let (dir, file) = scratch("half");
-        let copy = set_aside_as(&file, "corrupt", "20260102-030405", b"all of it", half_then_fail);
+        let copy = set_aside_as(
+            &file,
+            "corrupt",
+            "20260102-030405",
+            b"all of it",
+            half_then_fail,
+        );
         assert!(copy.is_err());
         assert!(names(&dir).is_empty());
         let _ = std::fs::remove_dir_all(&dir);
@@ -768,8 +1055,14 @@ mod tests {
         std::os::unix::fs::symlink(&real, &file).unwrap();
 
         save_to(&file, &Settings::default()).unwrap();
-        assert!(std::fs::symlink_metadata(&file).unwrap().file_type().is_symlink());
-        assert_eq!(shown(&parse(&std::fs::read(&real).unwrap()).unwrap()), defaults());
+        assert!(std::fs::symlink_metadata(&file)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(
+            shown(&parse(&std::fs::read(&real).unwrap()).unwrap()),
+            defaults()
+        );
         assert_eq!(names(&dir), ["dotfiles-settings.json", "settings.json"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -788,7 +1081,12 @@ mod tests {
         let (dir, file) = scratch("keys");
         save_to(&file, &Settings::default()).unwrap();
         let written: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
-        let keys: Vec<&str> = written.as_object().unwrap().keys().map(String::as_str).collect();
+        let keys: Vec<&str> = written
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
         assert_eq!(
             keys,
             [
@@ -797,6 +1095,8 @@ mod tests {
                 "autoCloseInterval",
                 "openOnHover",
                 "absenceInterval",
+                "visibilityMode",
+                "userPinned",
                 "activeIntegrations",
                 "mainPill",
                 "screen",
@@ -816,6 +1116,16 @@ mod tests {
                 "pillColors",
                 "language",
                 "desktopMochi",
+                "phoneLink",
+                "phoneChat",
+                "phoneChatModels",
+                "phoneDetails",
+                "phoneAnswers",
+                "phoneDiffs",
+                "phoneUsage",
+                "phoneServices",
+                "phoneRelay",
+                "phoneRelayUrl",
             ]
         );
         let _ = std::fs::remove_dir_all(&dir);

@@ -1152,6 +1152,7 @@ export class Island {
   // ── DOM sync ────────────────────────────────────────────────────────────────
 
   private syncDom() {
+    this.fsm.pinned = State.isPinned || State.personalAgentApproval || State.settings.userPinned;
     const expanded = State.mode === "expanded";
     const greetingActive = expanded && State.view === "greeting";
 
@@ -1208,6 +1209,7 @@ export class Island {
 
   /** Applies settings coming from Rust at boot. */
   applySettings() {
+    this.fsm.setVisibilityMode(State.agentRuntimeAvailable ? State.settings.visibilityMode : "autoHide");
     Sound.setEnabled(State.settings.soundEnabled);
     Sound.setVolume(State.settings.soundVolume);
     this.fsm.homeToPetitDelay = State.settings.autoCloseInterval;

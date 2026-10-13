@@ -2,43 +2,28 @@
 
 #[cfg(windows)]
 pub mod agent_chat;
-#[cfg(windows)]
-pub mod capabilities;
-#[cfg(windows)]
-pub mod documents;
-#[cfg(windows)]
-pub mod file_dialog;
-#[cfg(windows)]
-pub mod hermes;
-#[cfg(windows)]
-pub mod hermes_bridge;
-#[cfg(windows)]
-pub mod managed_commands;
-#[cfg(windows)]
-pub mod managed_services;
-#[cfg(windows)]
-pub mod memory;
-#[cfg(windows)]
-pub mod personal_commands;
-#[cfg(windows)]
-pub mod personal_runtime;
-#[cfg(windows)]
-pub mod supervisor;
-#[cfg(windows)]
-pub mod usage;
+mod agent_hooks;
+mod agent_runtime;
 #[cfg(windows)]
 pub mod agent_wiring;
-mod agent_runtime;
-mod privacy;
-mod agent_hooks;
 mod agents;
+#[cfg(windows)]
+pub mod capabilities;
 mod chat;
 mod claude;
 mod codex_plan;
 mod config_file;
 mod desktop;
+#[cfg(windows)]
+pub mod documents;
+#[cfg(windows)]
+pub mod file_dialog;
 mod files;
 mod github;
+#[cfg(windows)]
+pub mod hermes;
+#[cfg(windows)]
+pub mod hermes_bridge;
 mod hooks;
 mod i18n;
 mod identity;
@@ -46,12 +31,24 @@ mod integrations;
 mod island;
 mod local_chat;
 mod log;
+#[cfg(windows)]
+pub mod managed_commands;
+#[cfg(windows)]
+pub mod managed_services;
+#[cfg(windows)]
+pub mod memory;
 mod net;
 mod openai_compat;
+#[cfg(windows)]
+pub mod personal_commands;
+#[cfg(windows)]
+pub mod personal_runtime;
+mod phone_link;
 mod pipe;
 mod platform;
 #[cfg(target_os = "linux")]
 mod portal;
+mod privacy;
 mod recap;
 mod secrets;
 mod session_window;
@@ -59,7 +56,11 @@ mod settings;
 mod shortcuts;
 mod sounds;
 mod spotify;
+#[cfg(windows)]
+pub mod supervisor;
 mod tray;
+#[cfg(windows)]
+pub mod usage;
 #[cfg(windows)]
 mod webview_drop;
 
@@ -69,7 +70,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
-use tauri_plugin_autostart::{ManagerExt, MacosLauncher};
+use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
 use chat::{Chat, ChatContext, ChatReply, ModelInfo};
 use files::DroppedFile;
@@ -80,12 +81,12 @@ use settings::Settings;
 
 #[cfg(windows)]
 pub struct PersonalStore {
- pub memory: Result<memory::MemoryService,String>,
- pub documents: Result<documents::DocumentService,String>,
+    pub memory: Result<memory::MemoryService, String>,
+    pub documents: Result<documents::DocumentService, String>,
 }
 
 pub struct Shared {
- pub paused: AtomicBool,
+    pub paused: AtomicBool,
     pub settings: Mutex<Settings>,
     pub gate: Arc<PollGate>,
 }
@@ -131,6 +132,17 @@ fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
         // Where Mochi sits on the desktop is desktop.rs's to say, not a webview's.
         let mut settings = settings.clone();
         settings.desktop_mochi = current.desktop_mochi.clone();
+        // Same for the phone link: only its own commands turn it on or off.
+        settings.phone_link = current.phone_link;
+        settings.phone_chat = current.phone_chat;
+        settings.phone_details = current.phone_details;
+        settings.phone_answers = current.phone_answers;
+        settings.phone_diffs = current.phone_diffs;
+        settings.phone_usage = current.phone_usage;
+        settings.phone_services = current.phone_services.clone();
+        settings.phone_relay = current.phone_relay;
+        settings.phone_relay_url = current.phone_relay_url.clone();
+        settings.phone_chat_models = current.phone_chat_models.clone();
         *current = settings;
         (screen_changed, autostart_changed, shortcuts_changed)
     };
@@ -140,7 +152,11 @@ fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
     }
     if autostart_changed {
         let manager = app.autolaunch();
-        let result = if settings.autostart { manager.enable() } else { manager.disable() };
+        let result = if settings.autostart {
+            manager.enable()
+        } else {
+            manager.disable()
+        };
         if let Err(err) = result {
             eprintln!("[coucou] autostart: {err}");
         }
@@ -195,7 +211,12 @@ fn set_collapsed(app: AppHandle, shared: State<Shared>, collapsed: bool) {
 /// The front end pushes the island shape; Rust decides click-through from it.
 #[tauri::command]
 fn set_island_rect(app: AppHandle, shared: State<Shared>, x: f64, y: f64, width: f64, height: f64) {
-    shared.gate.set_rect(island::IslandRect { x, y, w: width, h: height });
+    shared.gate.set_rect(island::IslandRect {
+        x,
+        y,
+        w: width,
+        h: height,
+    });
     // Without the cursor poll the input region is the click-through: it follows the island.
     if !platform::CURSOR_POLL {
         island::refresh_click_through(&app, &shared.gate);
@@ -204,7 +225,9 @@ fn set_island_rect(app: AppHandle, shared: State<Shared>, x: f64, y: f64, width:
 
 #[tauri::command]
 fn focus_window(app: AppHandle, focused: bool) {
-    let Some(win) = island::window(&app) else { return };
+    let Some(win) = island::window(&app) else {
+        return;
+    };
     platform::set_activating(&win, focused);
     if focused {
         let _ = win.set_focus();
@@ -273,7 +296,11 @@ fn open_session(session_id: Option<String>, path: Option<String>) -> bool {
     let Some(owners) = session_id.as_deref().and_then(session_window::lookup) else {
         return open_in_vscode(path);
     };
-    let folder = path.as_deref().map(session_window::folder_name).unwrap_or_default().to_string();
+    let folder = path
+        .as_deref()
+        .map(session_window::folder_name)
+        .unwrap_or_default()
+        .to_string();
     #[cfg(windows)]
     {
         if platform::focus_session_window(&owners, &folder) {
@@ -315,7 +342,9 @@ fn diff_file(path: &str) -> Option<&std::path::Path> {
 /// xdg-open or Explorer would run a script that Claude just wrote.
 #[tauri::command]
 fn open_file_in_vscode(path: String) -> bool {
-    let Some(file) = diff_file(&path) else { return false };
+    let Some(file) = diff_file(&path) else {
+        return false;
+    };
     if let Some(code) = platform::find_on_path("code") {
         let mut cmd = Command::new(code);
         cmd.arg(file);
@@ -331,8 +360,8 @@ fn open_file_in_vscode(path: String) -> bool {
 
 #[tauri::command]
 fn quit_app(app: AppHandle) {
- #[cfg(windows)]
- agent_wiring::cancel(&app);
+    #[cfg(windows)]
+    agent_wiring::cancel(&app);
     app.exit(0);
 }
 
@@ -340,9 +369,11 @@ fn quit_app(app: AppHandle) {
 /// not just the island stopping showing things.
 #[tauri::command]
 fn set_paused(app: AppHandle, shared: State<Shared>, paused: bool) {
- shared.paused.store(paused, Ordering::Relaxed);
- #[cfg(windows)]
- if paused { agent_wiring::cancel(&app); }
+    shared.paused.store(paused, Ordering::Relaxed);
+    #[cfg(windows)]
+    if paused {
+        agent_wiring::cancel(&app);
+    }
 
     integrations::set_paused(paused);
 }
@@ -450,7 +481,10 @@ fn status_line_apply(
 /// shows. Off the main thread: it can take a few seconds.
 #[tauri::command]
 async fn codex_plan_usage() -> Option<serde_json::Value> {
-    tauri::async_runtime::spawn_blocking(codex_plan::read).await.ok().flatten()
+    tauri::async_runtime::spawn_blocking(codex_plan::read)
+        .await
+        .ok()
+        .flatten()
 }
 
 #[tauri::command]
@@ -506,7 +540,10 @@ async fn chat_send(
 /// The models a provider offers, for the picker in the chat view. Only asked
 /// once the user picked that provider, and only with its key or address.
 #[tauri::command]
-async fn chat_models(shared: State<'_, Shared>, provider: String) -> Result<Vec<ModelInfo>, String> {
+async fn chat_models(
+    shared: State<'_, Shared>,
+    provider: String,
+) -> Result<Vec<ModelInfo>, String> {
     let settings = shared.settings.lock().unwrap().clone();
     chat::models(&settings, &provider).await
 }
@@ -697,7 +734,10 @@ pub fn run() {
                 }
             }
         }))
-        .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None));
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            None,
+        ));
     // Where no global shortcut can work, the plugin isn't even started.
     if platform::global_shortcuts_blocked().is_none() {
         builder = builder.plugin(shortcuts::plugin());
@@ -762,6 +802,32 @@ pub fn run() {
             set_paused,
             shortcuts_status,
             shortcuts_suspend,
+            phone_link::phone_link_status,
+            phone_link::phone_link_set_enabled,
+            phone_link::phone_link_pairing,
+            phone_link::phone_link_new_pairing,
+            phone_link::phone_link_publish,
+            phone_link::phone_link_publish_question,
+            phone_link::phone_link_publish_prefs,
+            phone_link::phone_answers_status,
+            phone_link::phone_answers_set_enabled,
+            phone_link::phone_diffs_status,
+            phone_link::phone_diffs_set_enabled,
+            phone_link::phone_link_send_diff,
+            phone_link::phone_usage_status,
+            phone_link::phone_usage_set_enabled,
+            phone_link::phone_relay_status,
+            phone_link::phone_relay_set,
+            phone_link::phone_relay_set_access,
+            phone_link::phone_link_publish_usage,
+            phone_link::phone_services_status,
+            phone_link::phone_services_set,
+            phone_link::phone_link_publish_services,
+            phone_link::phone_details_status,
+            phone_link::phone_details_set_enabled,
+            phone_link::phone_chat_status,
+            phone_link::phone_chat_set_enabled,
+            phone_link::phone_chat_set_models,
             recap::recap_history,
             recap::recap_prefs,
             recap::recap_set_enabled,
@@ -793,6 +859,7 @@ pub fn run() {
             let handle = app.handle().clone();
             #[cfg(windows)]
             agent_wiring::setup(&handle);
+            app.manage(phone_link::PhoneLink::new(handle.clone()));
             tray::build(&handle)?;
             // Before the island: see create_settings_window.
             create_settings_window(&handle);
@@ -825,13 +892,20 @@ pub fn run() {
             log::line(format!("--- Coucou {} started ---", env!("CARGO_PKG_VERSION")));
             hooks::ensure_hook_exe(&handle);
             pipe::start(handle.clone());
+            phone_link::start_if_enabled(&handle);
             integrations::start(handle.clone());
             spotify::sync(&handle, &loaded.active_integrations);
             shortcuts::apply(&handle, &loaded.shortcuts);
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Coucou");
+        .build(tauri::generate_context!())
+        .expect("error while building Coucou")
+        .run(|app, event| {
+            // Withdraw the phone link's announcement on the local network before the process ends.
+            if let tauri::RunEvent::Exit = event {
+                phone_link::stop_on_exit(app);
+            }
+        });
 }
 
 #[cfg(test)]
