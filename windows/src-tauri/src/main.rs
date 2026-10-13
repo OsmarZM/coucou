@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    #[cfg(windows)]
     if std::env::args().any(|arg| {
         matches!(
             arg.as_str(),
@@ -22,6 +23,7 @@ fn main() {
         });
         std::process::exit(if result.is_ok() { 0 } else { 1 });
     }
+    #[cfg(windows)]
     if let Some(code) = coucou_lib::documents::worker_entry() {
         std::process::exit(code);
     }

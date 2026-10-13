@@ -1,13 +1,13 @@
 {
   "name": "coucou-windows",
   "private": true,
-  "version": "0.1.4",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "test": "node --import ./scripts/test-register.mjs --test tests/*.test.mjs",
     "preview": "vite preview",
+    "test": "node --import ./tests/setup.mjs --test \"tests/**/*.test.mjs\"",
     "icons": "node scripts/gen-icons.mjs",
     "tauri": "tauri",
     "predev": "cargo build --release -p coucou-hook",

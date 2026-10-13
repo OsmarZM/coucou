@@ -1,4 +1,4 @@
-import { Bridge } from "../core/bridge";
+import { Bridge } from "../personal/core/bridge";
 import { clear, h } from "../views/dom";
 
 export interface ManagedModelSettings {

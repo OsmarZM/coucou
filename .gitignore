@@ -21,3 +21,6 @@ DerivedData/
 _prive/
 windows/.playwright-cli/
 windows/output/playwright/
+
+__pycache__/
+*.pyc
