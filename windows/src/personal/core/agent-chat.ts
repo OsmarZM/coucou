@@ -35,11 +35,11 @@ export interface AgentConversation {
 }
 interface ConversationConfig { agent: ChatAgent; cwd: string; writable: boolean; sessionId?: string | null; contextId?: string | null }
 interface MetadataStorage { getItem(key: string): string | null; setItem(key: string, value: string): void }
-const AGENTS: ChatAgent[] = ["codex", "claude", "gemini", "copilot", "hermes"];
+const AGENTS: ChatAgent[] = ["codex", "claude", "gemini", "copilot", "hermes", "api"];
 let hermesName = "Hermes";
 export function setHermesDisplayName(name: string) { hermesName = name.trim().slice(0, 64) || "Hermes"; }
 export function agentDisplayName(agent: ChatAgent | string): string {
-  return ({ codex: "Codex", claude: "Claude", gemini: "Gemini", copilot: "GitHub Copilot", hermes: hermesName, anthropic: "Anthropic" } as Record<string,string>)[agent] ?? agent;
+  return ({ codex: "Codex", claude: "Claude", gemini: "Gemini", copilot: "GitHub Copilot", api: "Coucou", hermes: hermesName, anthropic: "Anthropic" } as Record<string,string>)[agent] ?? agent;
 }
 const STORAGE_KEY = "coucou.cli-chat.metadata.v1";
 const MAX_CONVERSATIONS = 16;

@@ -7,7 +7,7 @@ export interface RuntimeToolSpec {
 }
 
 export function runtimeAvailability(provider: string, personal: boolean, tools: RuntimeToolSpec[] | null | undefined): string | null {
-  if (!["codex", "hermes"].includes(provider) || !personal || !Array.isArray(tools) || !tools.length) return null;
-  const channel = provider === "hermes" ? "Hermes com o modelo configurado, incluindo FreeLLMAPI" : "novos chats pessoais Codex com CLI compatível";
+  if (!["codex", "hermes", "api"].includes(provider) || !personal || !Array.isArray(tools) || !tools.length) return null;
+  const channel = provider === "api" ? "Coucou com o provedor escolhido" : provider === "hermes" ? "Hermes com o modelo configurado, incluindo FreeLLMAPI" : "novos chats pessoais Codex com CLI compatível";
   return `Ações locais para ${channel}: abrir aplicativos e configurações, consultar processos e lixeira e simular organização de arquivos. Cada ação pede sua confirmação. A simulação não move arquivos.`;
 }

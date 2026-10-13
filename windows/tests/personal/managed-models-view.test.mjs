@@ -70,7 +70,7 @@ test("disabling free models uses saved settings despite enabled autostart and in
   const view = await buildManagedModelsSection();
   const field = (label) => all(view).find((node) => node.getAttribute("aria-label") === label);
   assert.equal(field("Iniciar serviço ao entrar no Windows").checked, true);
-  field("Nome do agente pessoal").value = "";
+  field("Nome de exibição do Hermes pessoal").value = "";
   field("Provedor autorizado").value = "cerebras";
   field("Modelo do agente").value = "auto:invalid-unsaved-model";
   const disable = all(view).find((node) => node.tagName === "BUTTON" && node.textContent === "Desabilitar modo gratuito");
@@ -84,7 +84,7 @@ test("disabling free models uses saved settings despite enabled autostart and in
   assert.match(view.textContent, /Operação concluída\./);
   assert.match(view.textContent, /Serviço: parado\./);
   assert(all(view).some((node) => node.tagName === "BUTTON" && node.textContent === "Habilitar modo gratuito"));
-  assert.equal(field("Nome do agente pessoal").value, "Meu Hermes", "invalid drafts must not overwrite the saved agent name");
+  assert.equal(field("Nome de exibição do Hermes pessoal").value, "Meu Hermes", "invalid drafts must not overwrite the saved agent name");
   assert.equal(field("Provedor autorizado").value, "groq");
   assert.equal(field("Modelo do agente").value, "saved-model");
   assert.equal(field("Iniciar serviço ao entrar no Windows").checked, false);

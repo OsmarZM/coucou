@@ -17,8 +17,14 @@ async fn agent_chat_status(
     services: State<'_, managed_services::ManagedServices>,
 ) -> Result<Vec<agent_chat::CliStatus>, String> {
     let mut statuses = agent_chat::status();
-    let status = supervisor.status(&services).await?;
-    statuses.push(agent_chat::hermes_status(status.available, status.detail));
+    match supervisor.status(&services).await {
+        Ok(status) => statuses.push(agent_chat::hermes_status(status.available, status.detail)),
+        Err(error) => statuses.push(agent_chat::hermes_status(
+            false,
+            crate::privacy::diagnostic(&error),
+        )),
+    }
+    statuses.push(agent_chat::api_status());
     Ok(statuses)
 }
 

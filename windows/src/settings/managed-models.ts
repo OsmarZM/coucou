@@ -39,7 +39,7 @@ export function managedConfiguration(
 
 export async function buildManagedModelsSection(): Promise<HTMLElement> {
   const body = h("div", { style: "display:flex;flex-direction:column;gap:12px" });
-  const section = h("section", {}, h("h2", { text: "Agente pessoal e modelos com cotas gratuitas" }), body);
+  const section = h("section", {}, h("h2", { text: "FreeLLMAPI · serviço opcional com cotas dos provedores" }), body);
   let status: ManagedModelStatus | null = null;
   let busy = false;
   let feedback = "";
@@ -65,7 +65,7 @@ export async function buildManagedModelsSection(): Promise<HTMLElement> {
 
   function draw() {
     clear(body);
-    body.append(h("p", { class: "hint", text: "O FreeLLMAPI usa as contas e cotas dos provedores que você autorizar. Não existe um saldo garantido de 7 bilhões de tokens. A conta do provedor determina a gratuidade; confirme seu plano e seus limites. O supervisor e as CLIs delegadas têm consumos separados." }));
+    body.append(h("p", { class: "hint", text: "O agente pessoal Coucou usa qualquer provedor configurado em Provedores do chat, sem instalar este serviço. Hermes/FreeLLMAPI é uma opção adicional. O FreeLLMAPI usa as contas e cotas dos provedores que você autorizar. Não existe um saldo garantido de 7 bilhões de tokens. A conta do provedor determina a gratuidade; confirme seu plano e seus limites. O supervisor e as CLIs delegadas têm consumos separados." }));
     if (feedback) body.append(h("div", { class: failed ? "notice err" : "notice", role: busy ? "status" : "alert", "aria-live": "polite", text: feedback }));
     if (!status) {
       body.append(h("div", { class: "notice warn", text: "Este serviço é opcional e começa desabilitado. Nenhum modelo é consultado ao abrir esta tela." }), action("Consultar estado", () => Bridge.managedServiceStatus()));
@@ -81,7 +81,7 @@ export async function buildManagedModelsSection(): Promise<HTMLElement> {
       if (settings.setupDecision === "declined") body.append(h("div", { class: "hint", text: "Sua escolha foi salva. As conversas existentes continuam disponíveis." }));
       return;
     }
-    const name = h("input", { type: "text", value: settings.agentName, maxlength: "60", "aria-label": "Nome do agente pessoal", style: "flex:1;min-width:160px" });
+    const name = h("input", { type: "text", value: settings.agentName, maxlength: "60", "aria-label": "Nome de exibição do Hermes pessoal", style: "flex:1;min-width:160px" });
     const provider = h("select", { "aria-label": "Provedor autorizado" }, h("option", { value: "groq", text: "Groq" }), h("option", { value: "cerebras", text: "Cerebras" }));
     provider.value = settings.model?.platform ?? settings.approvedProviders[0] ?? "groq";
     const model = h("input", { type: "text", value: settings.model?.modelId ?? "", placeholder: "Identificador exato do modelo na sua conta", "aria-label": "Modelo do agente", style: "flex:1;min-width:180px", autocomplete: "off", spellcheck: "false" });
@@ -89,7 +89,7 @@ export async function buildManagedModelsSection(): Promise<HTMLElement> {
     startup.disabled = busy || !settings.enabled || !status.runtimeInstalled;
     for (const field of [name, provider, model]) field.disabled = busy;
     const desired = (enabled = settings.enabled) => managedConfiguration(settings, name.value, provider.value, model.value, startup.checked, enabled);
-    body.append(h("div", { class: "row" }, h("label", { text: "Nome do agente" }), name));
+    body.append(h("div", { class: "row" }, h("label", { text: "Nome de exibição do Hermes" }), name));
     body.append(h("div", { class: "row" }, h("label", { text: "Provedor e modelo" }), provider, model));
     body.append(h("label", { class: "row" }, startup, h("span", { text: "Iniciar apenas este serviço ao entrar no Windows" })));
     body.append(h("div", { class: "hint", text: "Essa preferência é independente de iniciar o Coucou. O login inicia infraestrutura, sem perguntas, tarefas ou retomadas automáticas. Fallback para outro provedor está desligado." }));

@@ -34,7 +34,7 @@ pub const DEFAULT_MODEL: &str = "claude-opus-5";
 
 /// The Messages endpoint: Anthropic's, or the gateway in COUCOU_ANTHROPIC_BASE_URL.
 /// Read once; the gateway's host (never the key) goes to the log once.
-fn endpoint() -> Result<Url, String> {
+pub(crate) fn endpoint() -> Result<Url, String> {
     static ENDPOINT: OnceLock<Result<Url, String>> = OnceLock::new();
     ENDPOINT
         .get_or_init(|| {

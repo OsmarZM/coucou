@@ -1,4 +1,5 @@
 import { h, svg, clear } from "./dom";
+import {renderMarkdown} from "../../views/markdown";
 import { ICONS } from "./icons";
 import { Bridge, IS_TAURI, type ChatContext } from "../core/bridge";
 import { AgentChat, PERSONAL_CONTEXT_ID, agentDisplayName, cancelAgentChat, chatDiagnostic, decideAgentChat, denyAgentChatApproval, refreshAgentChatStatus, sendAgentChat, setApprovalInteractionGuard, type AgentConversation } from "../core/agent-chat";
@@ -18,7 +19,7 @@ function bubble(role: "user" | "assistant", content: string, agent?: string, cre
   const row = h("div", { class: role === "user" ? "chat-row user" : "chat-row" });
   const text = h("div", { class: role === "user" ? "bubble" : "reply" });
   if (agent) text.append(h("div", { class: "chat-message-meta", text: `${role === "user" ? tr("chat.you") : agentLabel(agent)}${createdAt ? ` · ${new Date(createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}` : ""}`, title: createdAt ? new Date(createdAt).toLocaleString("pt-BR") : "" }));
-  text.append(h("span", { text: content })); if (truncated) text.append(h("div", { class: "chat-message-meta", text: tr("chat.historyExcerpt") })); row.append(text); return row;
+  if(role === "assistant") { const body=h("div"); renderMarkdown(body,content); text.append(body); } else text.append(h("span", { text: content })); if (truncated) text.append(h("div", { class: "chat-message-meta", text: tr("chat.historyExcerpt") })); row.append(text); return row;
 }
 
 export function buildPrompt(onHeightChange: () => void, openLearned: () => void = () => {}): ViewHost {
@@ -122,7 +123,7 @@ export function buildPrompt(onHeightChange: () => void, openLearned: () => void 
         const availability = AgentChat.statuses.find((status) => status.agent === AgentChat.provider);
         if (availability && !availability.available) throw new Error(availability.detail || tr("chat.unavailable"));
         if (availability?.readonlyOnly && writable.checked) throw new Error(tr("chat.readonly"));
-        if (!cwd.value.trim() && !(availability?.personalSupported ?? ["codex", "claude", "hermes"].includes(AgentChat.provider))) throw new Error(tr("chat.personalUnavailable"));
+        if (!cwd.value.trim() && !(availability?.personalSupported ?? ["codex", "claude", "hermes", "api"].includes(AgentChat.provider))) throw new Error(tr("chat.personalUnavailable"));
         const conversation = formConversation();
         if (conversation.runId || attachmentScopeBusy(conversation.id)) throw new Error("Há uma execução usando este contexto. Aguarde sua conclusão ou cancele antes de enviar.");
         if (Attachments.get(conversation.id).busy) throw new Error(tr("chat.attachBusy"));
@@ -174,7 +175,7 @@ export function buildPrompt(onHeightChange: () => void, openLearned: () => void 
     const runtimeText = runtimeAvailability(AgentChat.provider, !conversation?.cwd, runtimeTools);
     runtimeHint.hidden = !runtimeText;
     runtimeHint.textContent = runtimeText ?? "";
-    projectControls.hidden=conversation?.agent==="hermes";hermesHint.hidden=conversation?.agent!=="hermes";
+    projectControls.hidden=["hermes","api"].includes(conversation?.agent ?? "");hermesHint.hidden=conversation?.agent!=="hermes";
     footer.textContent = `${State.appVersion ? `Coucou ${State.appVersion} · ` : ""}${tr(cli ? conversation?.contextId === PERSONAL_CONTEXT_ID ? "chat.continuousContext" : "chat.separateChannel" : "chat.apiStorage")}`;
     if (conversation && selectedForm !== conversation.id) { selectedForm = conversation.id; fillForm(conversation); }
     if (conversation && !formDirty && nativeSessionShown !== conversation.sessionId) { resume.value = conversation.sessionId ?? ""; nativeSessionShown = conversation.sessionId; }

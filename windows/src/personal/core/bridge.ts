@@ -172,7 +172,7 @@ export interface IntegrationUpdate {
   event: { success: boolean; label: string; detail: string | null } | null;
 }
 
-export type ChatAgent = "codex" | "claude" | "gemini" | "copilot" | "hermes";
+export type ChatAgent = "codex" | "claude" | "gemini" | "copilot" | "hermes" | "api";
 export interface ManagedModelSettings {
   setupDecision: "pending" | "declined" | "accepted"; enabled: boolean; agentName: string; autostart: boolean;
   approvedProviders: string[]; model: { platform: string; modelId: string } | null;

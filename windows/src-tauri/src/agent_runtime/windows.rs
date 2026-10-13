@@ -70,7 +70,7 @@ pub(crate) async fn execute<I: PersonalToolIo + Send>(
     args: Value,
 ) -> Result<Value, String> {
     if !ctx.personal
-        || !matches!(ctx.agent.as_str(), "codex" | "hermes")
+        || !matches!(ctx.agent.as_str(), "codex" | "hermes" | "api")
         || !io.local_runtime_enabled()
     {
         return Err(
@@ -532,6 +532,36 @@ mod tests {
         assert!(execute(&mut io, &ctx, "coucou_query_processes", json!({}))
             .await
             .is_err());
+        assert_eq!(io.approvals, 2);
+    }
+    #[tokio::test]
+    async fn api_provider_uses_typed_validation_and_explicit_permission() {
+        let (_tx, rx) = watch::channel(false);
+        let mut io = fixture(rx, "deny");
+        io.ctx.agent = "api".into();
+        let ctx = io.ctx.clone();
+        assert!(execute(
+            &mut io,
+            &ctx,
+            "coucou_query_processes",
+            json!({"command":"calc"})
+        )
+        .await
+        .is_err());
+        assert_eq!(io.approvals, 0);
+        assert!(execute(&mut io, &ctx, "coucou_query_processes", json!({}))
+            .await
+            .is_err());
+        assert_eq!(io.approvals, 1);
+        io.decision = "allow".into();
+        let result = execute(&mut io, &ctx, "coucou_query_processes", json!({}))
+            .await
+            .unwrap();
+        assert!(result["processes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["pid"] == std::process::id()));
         assert_eq!(io.approvals, 2);
     }
     fn ps_args(script: &str) -> Vec<String> {

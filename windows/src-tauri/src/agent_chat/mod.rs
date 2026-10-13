@@ -1,5 +1,6 @@
 //! Owns local chat sessions. Only explicit UI actions start turns or grant decisions.
 mod acp;
+mod api;
 mod claude_cli;
 mod codex;
 #[cfg(test)]
@@ -68,7 +69,7 @@ const UNQUALIFIED_ISOLATION: &str = "O chat deste fornecedor está bloqueado: o 
 
 fn validate_provider_isolation(request: &StartRequest) -> Result<(), String> {
     match request.agent.as_str() {
-        "codex" | "claude" | "hermes" => Ok(()),
+        "codex" | "claude" | "hermes" | "api" => Ok(()),
         "gemini" | "copilot" => Err(UNQUALIFIED_ISOLATION.into()),
         _ => Err("Unsupported chat agent.".into()),
     }
@@ -108,6 +109,10 @@ pub fn status() -> Vec<CliStatus> {
         })
         .collect()
 }
+pub(crate) fn api_status() -> CliStatus {
+    CliStatus { agent: "api".into(), available: true, path: None, detail: "Usa o provedor e modelo escolhidos no Coucou. Acesso local exige confirmação; nenhuma CLI ou Hermes é necessária.".into(), readonly_only: true, personal_supported: true }
+}
+
 pub(crate) fn hermes_status(available: bool, detail: String) -> CliStatus {
     CliStatus {
         agent: "hermes".into(),
@@ -407,10 +412,15 @@ fn context(request: StartRequest) -> Result<RunContext, String> {
     if personal && request.writable {
         return Err("O modo pessoal não autoriza alterações no computador.".into());
     }
-    if request.agent == "hermes" && (!personal || request.writable) {
+    if matches!(request.agent.as_str(), "hermes" | "api") && (!personal || request.writable) {
         return Err("Hermes gerencia auxiliares somente no contexto pessoal restrito.".into());
     }
-    if personal && !matches!(request.agent.as_str(), "codex" | "claude" | "hermes") {
+    if personal
+        && !matches!(
+            request.agent.as_str(),
+            "codex" | "claude" | "hermes" | "api"
+        )
+    {
         return Err("O modo pessoal deste agente ainda não tem acesso restrito qualificado. Use o modo projeto.".into());
     }
     if personal
@@ -474,7 +484,7 @@ impl AgentChat {
             return Err("Anexe no máximo 10 documentos por turno.".into());
         }
         let mut ctx = context(request)?;
-        let executable = if ctx.agent == "hermes" {
+        let executable = if matches!(ctx.agent.as_str(), "hermes" | "api") {
             None
         } else {
             Some(process::resolve(&ctx.agent)?)
@@ -611,7 +621,18 @@ impl AgentChat {
                     _ => Err("Unknown CLI.".into()),
                 },
             };
-            let result = if ctx.agent == "hermes" && prepared.is_ok() {
+            let result = if ctx.agent == "api" && prepared.is_ok() {
+                api::run(
+                    &app,
+                    &ctx,
+                    &original_message,
+                    &attachment_ids,
+                    receiver,
+                    manager.inner.control.clone(),
+                    sink,
+                )
+                .await
+            } else if ctx.agent == "hermes" && prepared.is_ok() {
                 run_hermes(
                     &app,
                     &ctx,
