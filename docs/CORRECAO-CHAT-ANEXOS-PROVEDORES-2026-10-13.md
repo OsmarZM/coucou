@@ -41,4 +41,11 @@ Suíte completa: 593 testes Rust aprovados (548 aplicativo, 12 protocolo, 30 rel
 
 Layout verificado em Edge com HTML de fixture que monta os componentes e CSS reais: painel 304 px, área ativa 272 px, card pessoal 212 px, campo de mensagem dentro do card e sem overflow horizontal. O seletor de modelos usa o espaço disponível sem cortar o editor. Não é captura da janela Tauri.
 
-Versão de entrega: `0.4.0-agent.2`, versão MSI `0.4.0.2`. Empacotamento e instalação: em andamento. Clippy estrito tinha avisos no upstream na entrega anterior; a aprovação dos testes não elimina essa pendência. Evidências locais em `windows/target/chat-repair-*`, `windows/target/document-real-file-probe/evidence.json` e `windows/output/playwright/`. O preview visual usa dados de teste e não substitui clique nativo de aprovação, chamada a provedor real ou pareamento Android.
+Versão de entrega: `0.4.0-agent.2`, versão MSI `0.4.0.2`. Empacotamento NSIS/MSI concluído por `npm run pack`. Instalação existente em `D:/Nova pasta/Coucou/coucou.exe` atualizada e reaberta na versão `0.4.0-agent.2`. O binário instalado foi comparado integralmente ao executável gerado; a única diferença é a marca de empacotamento NSIS do Tauri. O hash de `settings.json` permaneceu idêntico. A leitura do PDF real foi repetida após a instalação, com as mesmas 26 páginas e 26.249 caracteres. Clippy estrito tinha avisos no upstream na entrega anterior; a aprovação dos testes não elimina essa pendência. Evidências locais em `windows/target/chat-repair-*`, `windows/target/document-real-file-probe/evidence.json` e `windows/output/playwright/`. O preview visual usa dados de teste e não substitui clique nativo de aprovação, chamada a provedor real ou pareamento Android.
+
+
+Backup antes da atualização: `C:\Users\FortaTech\AppData\Local\Coucou-update-backups\before-chat-repair-agent2-20261013-151805`. Nenhuma chave, hook global ou configuração de fornecedor externo foi alterada. Não houve push ou publicação do fork.
+
+Instaladores em `D:/coucou/windows/release/`: NSIS SHA256 `bbd5fef808154424e2cbe886ce4843cf4d112a1440c0ebb5b0aed7733c4e3750`; MSI SHA256 `e05e5c3de0637a3512630c7150adfd40bdfa8805e36055b129bcb1da04e84f73`.
+
+Conversas reais com os sete provedores e clique humano de aprovação ainda precisam de qualificação. A leitura local foi demonstrada; não foi alegado que algum fornecedor remoto resumiu o PDF. Linux e pareamento físico com celular não foram executados.
