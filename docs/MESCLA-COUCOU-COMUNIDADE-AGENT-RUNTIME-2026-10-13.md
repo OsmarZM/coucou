@@ -81,3 +81,13 @@ npm run pack
 ```
 
 Runtimes gerenciados e credenciais continuam exigindo configuração explícita. Não há instalação automática de CLIs, login de fornecedor ou ativação automática de hooks por este procedimento.
+
+## Entrega e instalação verificadas
+
+Em 13/10/2026 a mescla validada `8c7b98c` foi incorporada ao checkout principal `D:/coucou`, na branch `codex/multiagent-windows`, pelo commit `d08fd7c`. O código anterior permanece na branch `codex/pre-community-merge-20261013`. Foi comprovado que o código original e o snapshot usado na integração eram idênticos; a diferença era somente ignore de bytecode e um cache Python. As regras de ignore locais foram preservadas.
+
+Os instaladores versionados estão em `D:/coucou/windows/release/`. A instalação existente em `D:/Nova pasta/Coucou` foi atualizada para `0.4.0-agent.1` e aberta com sucesso: processo do caminho instalado respondendo, título `Coucou`. O hash das configurações permaneceu idêntico após a instalação. Isso confirma abertura do processo e preservação do arquivo, sem comprovar os cliques de aprovação nem inferência remota.
+
+O executável instalado tem SHA256 `765b8dc62ffa87682e0748b8163a08e29d036430c352759b1ce9de766a8f5f37`. Comparação integral comprovou que ele difere da build usada no probe somente nos três bytes da marca de empacotamento Tauri: `__TAURI_BUNDLE_TYPE_VAR_UNK` → `__TAURI_BUNDLE_TYPE_VAR_NSS`. Nenhum outro byte diverge.
+
+Backup pré-upgrade: `C:\Users\FortaTech\AppData\Local\Coucou-update-backups\before-agent-0.4.0-20261013-142513`. Inclui instalação 0.3.0, configurações roaming e dados locais de personal/documents/inbox/bin. Runtimes gerenciados anteriores foram mantidos. Nenhum push ou publicação comunitária foi efetuado. Builds Linux e chamadas a fornecedores reais permanecem sem qualificação neste computador.
